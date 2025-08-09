@@ -1,0 +1,67 @@
+{
+  "name": "gemini-discord-bot",
+  "version": "1.0.0",
+  "description": "A Gemini powered Discord Bot built with TypeScript",
+  "main": "dist/bot.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/bot.js",
+    "dev": "nodemon --exec tsx src/bot.ts",
+    "type-check": "tsc --noEmit",
+    "lint": "eslint src/**/*.ts",
+    "lint:fix": "eslint src/**/*.ts --fix",
+    "lint:check-disabled": "powershell -ExecutionPolicy Bypass -File scripts/scan_eslint_disable.ps1",
+    "linecount": "powershell -ExecutionPolicy Bypass -File scripts/count_lines.ps1",
+    "docs:check": "powershell -ExecutionPolicy Bypass -File scripts/check_fileoverview.ps1",
+    "docs:combine": "powershell -ExecutionPolicy Bypass -File scripts/extract_fileoverview.ps1",
+    "docs:clean": "rimraf \"fileoverview-collection.json\"",
+    "clean": "rimraf dist",
+    "db:init": "prisma migrate dev --name init && prisma generate",
+    "db:reset": "rimraf \"prisma/message_cache.db\" \"prisma/migrations\" && npm run db:init",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push && prisma generate",
+    "db:studio": "prisma studio",
+    "db:status": "prisma migrate status"
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "genkit",
+    "ai",
+    "typescript",
+    "gemini"
+  ],
+  "author": "GhostTypes",
+  "license": "MIT",
+  "dependencies": {
+    "@genkit-ai/googleai": "^1.14.0",
+    "@google/genai": "^1.11.0",
+    "@msgpack/msgpack": "^3.1.2",
+    "@prisma/client": "^6.13.0",
+    "@types/wav": "^1.0.4",
+    "bson": "^6.10.4",
+    "discord.js": "^14.15.3",
+    "dotenv": "^16.6.1",
+    "genkit": "^1.14.0",
+    "node-fetch": "^3.3.2",
+    "prisma": "^6.13.0",
+    "wav": "^1.0.2",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.12",
+    "@typescript-eslint/eslint-plugin": "^7.16.1",
+    "@typescript-eslint/parser": "^7.16.1",
+    "eslint": "^8.57.0",
+    "eslint-plugin-import": "^2.32.0",
+    "nodemon": "^3.1.4",
+    "prettier": "^3.3.3",
+    "rimraf": "^6.0.1",
+    "tsx": "^4.16.2",
+    "typescript": "^5.5.4"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
