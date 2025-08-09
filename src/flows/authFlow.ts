@@ -66,12 +66,7 @@ export class AuthFlow {
       });
 
       const response = await ai.generate({
-        prompt: `You are an authentication command parser for a Discord bot. Analyze the user message and determine the specific auth action they want to perform.
-
-USER MESSAGE: "${input.message}"
-MENTIONED_USERS: ${input.mentionedUserIds?.join(', ') || 'None'}
-REQUESTER_ID: ${input.userId}
-CHANNEL_ID: ${input.channelId}
+        system: `You are an authentication command parser for a Discord bot. Analyze the user message and determine the specific auth action they want to perform.
 
 SUPPORTED AUTH ACTIONS:
 - ADD_OPERATOR: Adding users as operators ("add @user as operator", "make @user admin", "promote @user")
@@ -80,12 +75,8 @@ SUPPORTED AUTH ACTIONS:
 - AUTH_STATUS: Checking auth status ("what's my access level", "am I an operator", "check my permissions")
 - WHITELIST_ADD: Adding channels to whitelist ("whitelist this channel", "enable bot here", "allow bot functionality")
 - WHITELIST_REMOVE: Removing from whitelist ("disable bot here", "unwhitelist channel", "remove from whitelist")
-- WHITELIST_STATUS: Checking whitelist status ("is this channel whitelisted", "check whitelist status", "what's the whitelist status")
-- WHITELIST_LIST: Listing whitelisted channels ("show whitelisted channels", "list channels", "what channels are enabled")
-
-WHITELIST TYPES:
-- BOT: Basic bot functionality (responding to mentions, commands) - DEFAULT
-- AUTONOMOUS: Autonomous responses (bot can respond without mentions)
+- WHITELIST_LIST: Listing whitelist status ("list whitelist", "show whitelisted channels", "whitelist status")  
+- WHITELIST_STATUS: Checking current channel status ("is this channel whitelisted", "check whitelist status here")
 
 ENTITY EXTRACTION RULES:
 1. For operator operations: Extract target user ID from MENTIONED_USERS if present
@@ -101,6 +92,10 @@ ACTION: [AUTH_ACTION]
 TARGET_USER: [user_id or NONE]
 WHITELIST_TYPE: [BOT/AUTONOMOUS or NONE]
 REASONING: [Brief explanation of decision]`,
+        prompt: `USER MESSAGE: "${input.message}"
+MENTIONED_USERS: ${input.mentionedUserIds?.join(', ') || 'None'}
+REQUESTER_ID: ${input.userId}
+CHANNEL_ID: ${input.channelId}`,
         config: {
           temperature: 0.1, // Low temperature for consistent parsing
           maxOutputTokens: 300,

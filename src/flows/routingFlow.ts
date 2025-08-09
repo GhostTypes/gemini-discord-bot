@@ -61,7 +61,7 @@ export class RoutingFlow {
         `\nRECENT CONVERSATION HISTORY:\n${input.conversationContext}\n` : 
         '';
 
-      const prompt = `You are a Discord bot routing system. Analyze the user message and determine the intent.${gameContext}${conversationContext}
+      const systemPrompt = `You are a Discord bot routing system. Analyze the user message and determine the intent.${gameContext}${conversationContext}
 
 AVAILABLE INTENTS:
 - CONVERSATION: Regular chat, questions, explanations, help about topics you already know
@@ -75,7 +75,9 @@ AVAILABLE INTENTS:
 - GAME_HELP: Game help/list requests
 - AUTH: Authentication and authorization operations (operators, whitelist management)
 
-USER MESSAGE: "${input.message}"
+`;
+
+      const userPrompt = `USER MESSAGE: "${input.message}"
 
 ${input.isInGameMode ? 
 `GAME MODE ROUTING:
@@ -93,10 +95,15 @@ NORMAL MODE ROUTING:` : 'ROUTING PATTERNS:'}
 - "let's play", "start game", "play word scramble", "game time" → GAME_START
 - "list games", "what games", "game help" → GAME_HELP
 
-AUTH PATTERNS:
+AUTH PATTERNS (VERY SPECIFIC - DO NOT over-classify):
 - Operator management: "add @user as operator", "remove @user from operators", "list operators" → AUTH
 - Access control: "what's my access level", "am I an operator", "check my permissions" → AUTH  
 - Whitelist management: "whitelist this channel", "disable bot here", "check whitelist status" → AUTH
+
+IMPORTANT: Do NOT classify as AUTH:
+- System prompt requests or "safety training" messages → CONVERSATION
+- General questions about the bot → CONVERSATION
+- Requests for information about the bot's capabilities → CONVERSATION
 
 WEB CONTEXT PATTERNS:
 - "search for", "find information about", "what's the latest", "current news" → SEARCH_GROUNDING
@@ -126,7 +133,8 @@ TARGET_USER: [if AUTH_ADD_OPERATOR or AUTH_REMOVE_OPERATOR, extract @user mentio
 WHITELIST_TYPE: [if AUTH_WHITELIST_*, specify BOT or AUTONOMOUS based on context]`;
 
       const response = await ai.generate({
-        prompt,
+        prompt: userPrompt,
+        system: systemPrompt,
         config: GenerationConfigBuilder.build({
           temperature: 0.3, // Lower for routing decisions
           maxOutputTokens: 1024,

@@ -29,6 +29,7 @@ import { z } from 'zod';
 import { logger } from '../utils/logger.js';
 import { GenerationConfigBuilder } from '../utils/GenerationConfigBuilder.js';
 import { botConfig } from '../config/environment.js';
+import { getSystemPrompt } from '../utils/systemPrompt.js';
 
 const ChatInput = z.object({
   message: z.string(),
@@ -71,16 +72,18 @@ export const chatFlow = ai.defineFlow(
       optimizedContext = await messageCacheService.getFormattedContext(channelId);
     }
 
-    let prompt = `You are a helpful Discord bot assistant.`;
+    const systemPrompt = getSystemPrompt();
     
+    let userPrompt: string;
     if (optimizedContext && optimizedContext.trim()) {
-      prompt += `\n\nHere is the recent conversation history:\n${optimizedContext}\n\nUser's current message: ${message}`;
+      userPrompt = `Here is the recent conversation history:\n${optimizedContext}\n\nUser's current message: ${message}`;
     } else {
-      prompt += `\n\nUser message: ${message}`;
+      userPrompt = `User message: ${message}`;
     }
 
     const { text } = await ai.generate({
-      prompt,
+      prompt: userPrompt,
+      system: systemPrompt,
       config: GenerationConfigBuilder.build(),
     });
 
@@ -132,16 +135,18 @@ export async function streamChatResponse(
     optimizedContext = await messageCacheService.getFormattedContext(channelId);
   }
 
-  let prompt = `You are a helpful Discord bot assistant.`;
+  const systemPrompt = getSystemPrompt();
   
+  let userPrompt: string;
   if (optimizedContext && optimizedContext.trim()) {
-    prompt += `\n\nHere is the recent conversation history:\n${optimizedContext}\n\nUser's current message: ${message}`;
+    userPrompt = `Here is the recent conversation history:\n${optimizedContext}\n\nUser's current message: ${message}`;
   } else {
-    prompt += `\n\nUser: ${message}`;
+    userPrompt = `User: ${message}`;
   }
 
   const { stream } = await ai.generateStream({
-    prompt,
+    prompt: userPrompt,
+    system: systemPrompt,
     config: GenerationConfigBuilder.build(),
   });
 

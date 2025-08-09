@@ -75,11 +75,15 @@ temp/
 firebase-debug.log
 
 # Local database files
+prisma/migrations/**
 *.sqlite
 *.db
 
 # PM2
 .pm2/
 
-# AI Agent Files
-.kiro/
+
+# Misc
+operators.json
+system_prompt.txt
+whitelisted_channels.json

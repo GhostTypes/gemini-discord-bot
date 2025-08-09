@@ -42,13 +42,13 @@ export const searchGroundingFlow = ai.defineFlow(
     logger.info('SEARCH GROUNDING: Processing search request', { userId, queryLength: message.length });
 
     try {
-      const prompt = `You are a helpful Discord bot assistant that provides accurate, up-to-date information using web search.
-
-User query: ${message}
+      const systemPrompt = `You are a helpful Discord bot assistant that provides accurate, up-to-date information using web search.
 
 Please provide a comprehensive answer using current information from web search. Be factual, cite your sources, and provide helpful context.`;
+      
+      const userQuery = `User query: ${message}`;
 
-      const result = await generativeService.generateSearchGrounded(prompt);
+      const result = await generativeService.generateSearchGrounded(userQuery, systemPrompt);
       const responseText = result.text ?? '';
 
       // Extract citations from grounding metadata
@@ -92,13 +92,13 @@ export async function streamSearchGrounding(
   logger.info('SEARCH GROUNDING STREAM: Processing search request', { userId, queryLength: message.length });
 
   try {
-    const prompt = `You are a helpful Discord bot assistant that provides accurate, up-to-date information using web search.
-
-User query: ${message}
+    const systemPrompt = `You are a helpful Discord bot assistant that provides accurate, up-to-date information using web search.
 
 Please provide a comprehensive answer using current information from web search. Be factual, cite your sources, and provide helpful context.`;
+    
+    const userQuery = `User query: ${message}`;
 
-    const result = await generativeService.generateSearchGroundedStream(prompt);
+    const result = await generativeService.generateSearchGroundedStream(userQuery, systemPrompt);
 
     let fullResponseText = '';
     let chunkCount = 0;

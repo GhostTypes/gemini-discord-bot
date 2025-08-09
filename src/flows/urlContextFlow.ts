@@ -46,18 +46,18 @@ export const urlContextFlow = ai.defineFlow(
 
     try {
       const urlList = urls.map((url, index) => `${index + 1}. ${url}`).join('\n');
-      const prompt = `You are a helpful Discord bot assistant that analyzes web content from provided URLs.
-
-User message: ${message}
-
-URLs to analyze:
-${urlList}
+      const systemPrompt = `You are a helpful Discord bot assistant that analyzes web content from provided URLs.
 
 Please analyze the content from these URLs and provide a comprehensive response to the user's message. Be thorough, accurate, and helpful in your analysis.
 
 IMPORTANT: Do not include or repeat the URLs in your response as this causes unwanted embeds in Discord. Just provide the analysis directly.`;
 
-      const result = await generativeService.generateUrlContext(prompt);
+      const userPrompt = `User message: ${message}
+
+URLs to analyze:
+${urlList}`;
+
+      const result = await generativeService.generateUrlContext(userPrompt, systemPrompt);
       const responseText = result.text ?? '';
 
       logger.info('URL CONTEXT: Response generated', { 
@@ -99,18 +99,18 @@ export async function streamUrlContext(
 
   try {
     const urlList = urls.map((url, index) => `${index + 1}. ${url}`).join('\n');
-    const prompt = `You are a helpful Discord bot assistant that analyzes web content from provided URLs.
-
-User message: ${message}
-
-URLs to analyze:
-${urlList}
+    const systemPrompt = `You are a helpful Discord bot assistant that analyzes web content from provided URLs.
 
 Please analyze the content from these URLs and provide a comprehensive response to the user's message. Be thorough, accurate, and helpful in your analysis.
 
 IMPORTANT: Do not include or repeat the URLs in your response as this causes unwanted embeds in Discord. Just provide the analysis directly.`;
 
-    const result = await generativeService.generateUrlContextStream(prompt);
+    const userPrompt = `User message: ${message}
+
+URLs to analyze:
+${urlList}`;
+
+    const result = await generativeService.generateUrlContextStream(userPrompt, systemPrompt);
 
     let fullResponseText = '';
     let chunkCount = 0;

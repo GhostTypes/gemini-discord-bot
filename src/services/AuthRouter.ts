@@ -27,13 +27,6 @@ import { WhitelistService, WhitelistType } from './WhitelistService.js';
 import { logger } from '../utils/logger.js';
 import { AuthFlowOutput } from '../flows/authFlow.js';
 
-interface AuthAction {
-  type: 'ADD_OPERATOR' | 'REMOVE_OPERATOR' | 'LIST_OPERATORS' | 'AUTH_STATUS' | 
-        'WHITELIST_ADD' | 'WHITELIST_REMOVE' | 'WHITELIST_STATUS' | 'WHITELIST_LIST';
-  targetUserId?: string;
-  whitelistType?: WhitelistType;
-  payload?: any;
-}
 
 export class AuthRouter {
   private operatorService: OperatorService;
@@ -44,84 +37,6 @@ export class AuthRouter {
     this.whitelistService = WhitelistService.getInstance();
   }
 
-  /**
-   * Parse natural language auth command and extract entities
-   */
-  private parseAuthCommand(message: string, discordMessage: Message): AuthAction | null {
-    const cleanMessage = message.toLowerCase().trim();
-    
-    // Extract user mentions from the Discord message
-    const mentionedUsers = Array.from(discordMessage.mentions.users.keys());
-    const targetUserId = mentionedUsers.length > 0 ? mentionedUsers[0] : undefined;
-
-    // Operator management patterns
-    if ((cleanMessage.includes('add') || cleanMessage.includes('make')) && 
-        (cleanMessage.includes('operator') || cleanMessage.includes('admin')) &&
-        targetUserId) {
-      return { type: 'ADD_OPERATOR', targetUserId };
-    }
-
-    if ((cleanMessage.includes('remove') || cleanMessage.includes('revoke') || cleanMessage.includes('delete')) && 
-        (cleanMessage.includes('operator') || cleanMessage.includes('admin')) &&
-        targetUserId) {
-      return { type: 'REMOVE_OPERATOR', targetUserId };
-    }
-
-    // Operator information patterns
-    if ((cleanMessage.includes('list') || cleanMessage.includes('show') || cleanMessage.includes('who')) &&
-        (cleanMessage.includes('operator') || cleanMessage.includes('admin'))) {
-      return { type: 'LIST_OPERATORS' };
-    }
-
-    if ((cleanMessage.includes('my') && (cleanMessage.includes('access') || cleanMessage.includes('permissions') || cleanMessage.includes('level'))) ||
-        (cleanMessage.includes('am i') && cleanMessage.includes('operator'))) {
-      return { type: 'AUTH_STATUS' };
-    }
-
-    // Whitelist information patterns - CHECK THESE FIRST to prevent conflicts
-    if ((cleanMessage.includes('check') || cleanMessage.includes('status') || cleanMessage.includes('what') || cleanMessage.includes('is')) &&
-        (cleanMessage.includes('whitelist') || cleanMessage.includes('enabled') || cleanMessage.includes('allowed'))) {
-      return { type: 'WHITELIST_STATUS' };
-    }
-
-    // Whitelist management patterns - ADD operations
-    if ((cleanMessage.includes('whitelist') || cleanMessage.includes('enable') || cleanMessage.includes('allow')) &&
-        (cleanMessage.includes('channel') || cleanMessage.includes('this') || cleanMessage.includes('here')) &&
-        !(cleanMessage.includes('status') || cleanMessage.includes('check') || cleanMessage.includes('what') || cleanMessage.includes('is'))) {
-      
-      // Determine whitelist type
-      let whitelistType: WhitelistType = WhitelistType.BOT; // Default to bot
-      
-      if (cleanMessage.includes('autonomous') || cleanMessage.includes('auto')) {
-        whitelistType = WhitelistType.AUTONOMOUS;
-      } else if (cleanMessage.includes('bot') && cleanMessage.includes('function')) {
-        whitelistType = WhitelistType.BOT;
-      }
-      
-      return { type: 'WHITELIST_ADD', whitelistType };
-    }
-
-    // Whitelist management patterns - REMOVE operations  
-    if ((cleanMessage.includes('unwhitelist') || cleanMessage.includes('remove') || cleanMessage.includes('disable') || cleanMessage.includes('deny')) &&
-        (cleanMessage.includes('channel') || cleanMessage.includes('this') || cleanMessage.includes('here') || cleanMessage.includes('bot'))) {
-      
-      // Determine whitelist type
-      let whitelistType: WhitelistType = WhitelistType.BOT; // Default to bot
-      
-      if (cleanMessage.includes('autonomous') || cleanMessage.includes('auto')) {
-        whitelistType = WhitelistType.AUTONOMOUS;
-      }
-      
-      return { type: 'WHITELIST_REMOVE', whitelistType };
-    }
-
-    if ((cleanMessage.includes('list') || cleanMessage.includes('show')) &&
-        (cleanMessage.includes('whitelist') || cleanMessage.includes('channel'))) {
-      return { type: 'WHITELIST_LIST' };
-    }
-
-    return null;
-  }
 
   /**
    * Handle authentication request with AI-determined action and entities
@@ -201,84 +116,6 @@ export class AuthRouter {
     }
   }
 
-  /**
-   * Legacy method - Handle natural language authentication request with string parsing
-   * @deprecated Use handleAuthAction() with AI flow instead
-   */
-  async handleAuthRequest(message: Message, cleanMessage: string): Promise<void> {
-    const userId = message.author.id;
-    const channelId = message.channelId;
-
-    try {
-      // Parse the command
-      const authAction = this.parseAuthCommand(cleanMessage, message);
-      
-      if (!authAction) {
-        await message.reply('I didn\'t understand that auth command. Try something like:\n' +
-          '• "add @user as operator"\n' +
-          '• "list operators"\n' +
-          '• "whitelist this channel"\n' +
-          '• "check whitelist status"');
-        return;
-      }
-
-      logger.info('Processing natural language auth command', {
-        userId,
-        channelId,
-        action: authAction.type,
-        targetUserId: authAction.targetUserId,
-        whitelistType: authAction.whitelistType
-      });
-
-      // Handle the specific auth action
-      switch (authAction.type) {
-        case 'ADD_OPERATOR':
-          await this.handleAddOperator(message, authAction.targetUserId!);
-          break;
-          
-        case 'REMOVE_OPERATOR':
-          await this.handleRemoveOperator(message, authAction.targetUserId!);
-          break;
-          
-        case 'LIST_OPERATORS':
-          await this.handleListOperators(message);
-          break;
-          
-        case 'AUTH_STATUS':
-          await this.handleAuthStatus(message);
-          break;
-          
-        case 'WHITELIST_ADD':
-          await this.handleWhitelistAdd(message, authAction.whitelistType!);
-          break;
-          
-        case 'WHITELIST_REMOVE':
-          await this.handleWhitelistRemove(message, authAction.whitelistType!);
-          break;
-          
-        case 'WHITELIST_STATUS':
-          await this.handleWhitelistStatus(message);
-          break;
-          
-        case 'WHITELIST_LIST':
-          await this.handleWhitelistList(message);
-          break;
-          
-        default:
-          await message.reply('Sorry, I couldn\'t process that auth command.');
-      }
-
-    } catch (error) {
-      logger.error('Error handling auth request:', {
-        error,
-        userId,
-        channelId,
-        message: cleanMessage.substring(0, 100)
-      });
-      
-      await message.reply('An error occurred while processing your auth request. Please try again.');
-    }
-  }
 
   private async handleAddOperator(message: Message, targetUserId: string): Promise<void> {
     // Check authorization

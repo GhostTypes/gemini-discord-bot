@@ -80,15 +80,16 @@ RESPONSE TYPES:
 
 Consider the channel context and recent messages if provided.
 
-Analyze this message and decide if an autonomous response is warranted:
-Message: "${input.message}"
-Username: ${input.username}
-${input.recentMessages ? `Recent context: ${input.recentMessages.map((m: any) => `${m.author}: ${m.content}`).join('\n')}` : ''}
-
 Return ONLY your analysis in JSON format - do not generate the actual response.`;
 
+    const userPrompt = `Analyze this message and decide if an autonomous response is warranted:
+Message: "${input.message}"
+Username: ${input.username}
+${input.recentMessages ? `Recent context: ${input.recentMessages.map((m: any) => `${m.author}: ${m.content}`).join('\n')}` : ''}`;
+
     const result = await ai.generate({
-      prompt: systemPrompt,
+      prompt: userPrompt,
+      system: systemPrompt,
       config: {
         temperature: 0.3,
         maxOutputTokens: 500,

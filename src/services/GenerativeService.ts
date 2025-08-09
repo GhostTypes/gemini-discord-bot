@@ -44,12 +44,13 @@ export class GenerativeService {
   /**
    * Generate content with search grounding
    */
-  async generateSearchGrounded(prompt: string) {
+  async generateSearchGrounded(userPrompt: string, systemPrompt?: string) {
     return await this.genAI.models.generateContent({
       model: botConfig.google.model,
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
       config: {
         tools: [{ googleSearch: {} }],
+        ...(systemPrompt && { systemInstruction: systemPrompt }),
         ...GenerationConfigBuilder.buildSearchGrounding(),
       },
     });
@@ -58,12 +59,13 @@ export class GenerativeService {
   /**
    * Generate streaming content with search grounding
    */
-  async generateSearchGroundedStream(prompt: string) {
+  async generateSearchGroundedStream(userPrompt: string, systemPrompt?: string) {
     return await this.genAI.models.generateContentStream({
       model: botConfig.google.model,
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
       config: {
         tools: [{ googleSearch: {} }],
+        ...(systemPrompt && { systemInstruction: systemPrompt }),
         ...GenerationConfigBuilder.buildSearchGrounding(),
       },
     });
@@ -72,11 +74,12 @@ export class GenerativeService {
   /**
    * Generate content for URL context analysis
    */
-  async generateUrlContext(prompt: string) {
+  async generateUrlContext(userPrompt: string, systemPrompt?: string) {
     return await this.genAI.models.generateContent({
       model: botConfig.google.model,
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
       config: {
+        ...(systemPrompt && { systemInstruction: systemPrompt }),
         ...GenerationConfigBuilder.buildUrlContext(),
       },
     });
@@ -85,11 +88,12 @@ export class GenerativeService {
   /**
    * Generate streaming content for URL context analysis
    */
-  async generateUrlContextStream(prompt: string) {
+  async generateUrlContextStream(userPrompt: string, systemPrompt?: string) {
     return await this.genAI.models.generateContentStream({
       model: botConfig.google.model,
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
       config: {
+        ...(systemPrompt && { systemInstruction: systemPrompt }),
         ...GenerationConfigBuilder.buildUrlContext(),
       },
     });
