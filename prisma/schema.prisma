@@ -1,0 +1,126 @@
+// Discord Bot Message Cache Schema
+// Based on Lumi Rust bot implementation with TypeScript adaptations
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          String    @id // Discord User ID
+  username    String
+  displayName String    // Server-specific nickname
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  // Relations
+  messages    Message[]
+}
+
+model Channel {
+  id                 String    @id // Discord Channel ID
+  guildId            String
+  contextWindowStart DateTime  @default(now()) // Sliding window start timestamp
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  
+  // Relations
+  messages           Message[]
+
+  @@index([guildId])
+}
+
+model Message {
+  id        String   @id // Discord Message ID
+  content   String
+  createdAt DateTime // Discord message timestamp
+
+  // Author relationship
+  authorId String
+  author   User   @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  // Channel relationship
+  channelId String
+  channel   Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  // Reply context support (self-referential)
+  replyToMessageId String?
+  replyToMessage   Message? @relation("MessageReplies", fields: [replyToMessageId], references: [id])
+  replies          Message[] @relation("MessageReplies")
+  
+  // Reply metadata for when referenced message is outside cache window
+  replyToAuthorTag String? // Discord author tag (fallback when relationship fails)
+  replyToContent   String? // Referenced message content preview (fallback)
+
+  // Attachment support with pre-processed base64 data for optimization
+  processedAttachments Json?     // Array of ProcessedMedia objects with base64 data
+  hasAttachments Boolean   @default(false) // Quick lookup for messages with attachments
+
+  // Performance indexes
+  @@index([channelId, createdAt]) // CRITICAL: Fast sliding window queries
+  @@index([authorId])
+  @@index([hasAttachments]) // Fast attachment lookup
+}
+
+// Game System Models
+
+model ChannelState {
+  id                  String       @id @default(cuid())
+  channelId           String       @unique
+  mode                String       @default("NORMAL") // "NORMAL" or "GAME"
+  activeGameSessionId String?      @unique
+  activeGameSession   GameSession? @relation(fields: [activeGameSessionId], references: [id])
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  @@index([channelId])
+  @@map("channel_states")
+}
+
+model GameSession {
+  id              String   @id @default(cuid())
+  channelId       String
+  gameType        String   // e.g., "wordScramble"
+  gameData        Json     // Complete serializable game state
+  isActive        Boolean  @default(true)
+  winnerId        String?
+  participants    Json     // Array of Discord User IDs
+  lastMessageId   String?  // Discord message ID for game board updates
+  startedAt       DateTime @default(now())
+  endedAt         DateTime?
+
+  // GeoGuesser-specific fields
+  geoGuesserData        String?   // JSON string for GeoGuesser game state
+  lastLocationFetch     DateTime? // Last API call timestamp for rate limiting
+  apiFailureCount       Int?      @default(0) // Track API failures for fallback logic
+
+  // Relationship to channel state (if this session is currently active)
+  activeInChannel ChannelState?
+
+  @@index([channelId, isActive])
+  @@index([startedAt])
+  @@map("game_sessions")
+}
+
+// Whitelist System Models
+
+model ChannelWhitelist {
+  id                String   @id @default(cuid())
+  channelId         String   
+  guildId           String
+  whitelistType     String   // "BOT" or "AUTONOMOUS" 
+  isEnabled         Boolean  @default(true)
+  addedBy           String   // Discord User ID who added this
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([channelId, whitelistType]) // Channel can only have one entry per type
+  @@index([channelId])
+  @@index([guildId])
+  @@index([whitelistType])
+  @@map("channel_whitelists")
+}
