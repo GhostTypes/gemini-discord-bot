@@ -19,6 +19,7 @@ import { ai } from '../genkit.config.js';
 import { GoogleGenAI } from '@google/genai';
 import { botConfig } from '../config/environment.js';
 import { logger } from '../utils/logger.js';
+import { flowLogger } from '../debug/flow-logger.js';
 import { 
   CodeExecutionInput, 
   CodeExecutionOutput,
@@ -147,7 +148,8 @@ export const codeExecutionFlow = ai.defineFlow(
 // Streaming function for Discord integration
 export async function streamCodeExecutionResponse(
   input: CodeExecutionInput,
-  onChunk: (chunk: { type: string; content: string; language?: string }) => Promise<void>
+  onChunk: (chunk: { type: string; content: string; language?: string }) => Promise<void>,
+  flowId?: string
 ): Promise<CodeExecutionOutput> {
   try {
     logger.info('CODE EXECUTION: Starting streaming response', { 
@@ -155,8 +157,32 @@ export async function streamCodeExecutionResponse(
       userId: input.userId 
     });
 
+    if (flowId) {
+      flowLogger.logFlow(flowId, `Starting code execution streaming`, 'info', {
+        userId: input.userId,
+        channelId: input.channelId,
+        query: input.message,
+        queryLength: input.message.length,
+        codeExecutionEnabled: true,
+        serverSideExecution: true
+      });
+    }
+
     // Validate input
     CodeExecutionInputSchema.parse(input);
+
+    if (flowId) {
+      flowLogger.logFlow(flowId, `Starting AI model streaming call for code execution`, 'info', {
+        model: botConfig.google.model,
+        userMessage: input.message, // FULL MESSAGE - not trimmed!
+        codeExecutionToolsEnabled: true,
+        serverSideExecution: true,
+        contents: [{ 
+          role: 'user', 
+          parts: [{ text: input.message }] 
+        }] // FULL CONTENTS - not trimmed!
+      });
+    }
 
     // Generate streaming response with code execution tools
     const stream = await genaiClient.models.generateContentStream({
@@ -175,6 +201,8 @@ export async function streamCodeExecutionResponse(
     let executionResult = '';
     let hasCode = false;
     let chunkCount = 0;
+    let codeChunkCount = 0;
+    let resultChunkCount = 0;
 
     // Process streaming response parts with callbacks
     for await (const chunk of stream) {
@@ -191,28 +219,64 @@ export async function streamCodeExecutionResponse(
             type: 'text', 
             content: part.text 
           });
+
+          // Log text chunks for flow monitoring
+          if (flowId) {
+            flowLogger.logFlow(flowId, `AI text chunk #${chunkCount} received`, 'debug', {
+              chunkNumber: chunkCount,
+              chunkType: 'text',
+              chunkLength: part.text.length,
+              fullChunkContent: part.text, // FULL CHUNK - not trimmed!
+              totalTextLength: fullText.length
+            });
+          }
         }
         
         // Handle executable code
         if (part.executableCode?.code) {
           executableCode += part.executableCode.code;
           hasCode = true;
+          codeChunkCount++;
           logger.debug(`CODE EXECUTION: Processing code chunk, language: ${part.executableCode.language || 'python'}`);
           await onChunk({ 
             type: 'code', 
             content: part.executableCode.code,
             language: part.executableCode.language || 'python'
           });
+
+          // Log code chunks for flow monitoring
+          if (flowId) {
+            flowLogger.logFlow(flowId, `AI code chunk #${codeChunkCount} received`, 'debug', {
+              codeChunkNumber: codeChunkCount,
+              chunkType: 'executable_code',
+              language: part.executableCode.language || 'python',
+              codeLength: part.executableCode.code.length,
+              fullCodeContent: part.executableCode.code, // FULL CODE - not trimmed!
+              totalCodeLength: executableCode.length
+            });
+          }
         }
         
         // Handle code execution results
         if (part.codeExecutionResult?.output) {
           executionResult += part.codeExecutionResult.output;
+          resultChunkCount++;
           logger.debug(`CODE EXECUTION: Processing result chunk, length: ${part.codeExecutionResult.output.length}`);
           await onChunk({ 
             type: 'result', 
             content: part.codeExecutionResult.output 
           });
+
+          // Log result chunks for flow monitoring
+          if (flowId) {
+            flowLogger.logFlow(flowId, `AI result chunk #${resultChunkCount} received`, 'debug', {
+              resultChunkNumber: resultChunkCount,
+              chunkType: 'execution_result',
+              resultLength: part.codeExecutionResult.output.length,
+              fullResultContent: part.codeExecutionResult.output, // FULL RESULT - not trimmed!
+              totalResultLength: executionResult.length
+            });
+          }
         }
       }
     }
@@ -238,6 +302,24 @@ export async function streamCodeExecutionResponse(
     // Validate output
     CodeExecutionOutputSchema.parse(result);
 
+    // Log completion of AI model call with comprehensive statistics
+    if (flowId) {
+      flowLogger.logFlow(flowId, `AI model streaming call completed`, 'info', {
+        model: botConfig.google.model,
+        totalTextChunks: chunkCount - codeChunkCount - resultChunkCount,
+        totalCodeChunks: codeChunkCount,
+        totalResultChunks: resultChunkCount,
+        finalResponseLength: result.response.length,
+        hasExecutableCode: hasCode,
+        fullFinalResponse: result.response, // FULL RESPONSE - not trimmed!
+        fullExecutableCode: executableCode, // FULL CODE - not trimmed!
+        fullExecutionResult: executionResult, // FULL RESULTS - not trimmed!
+        codeLanguage: hasCode ? 'python' : undefined,
+        serverSideExecution: true,
+        streamingCompleted: true
+      });
+    }
+
     logger.info(`CODE EXECUTION: Streaming completed successfully`, {
       hasCode,
       hasResults: !!executionResult.trim(),
@@ -249,6 +331,18 @@ export async function streamCodeExecutionResponse(
 
   } catch (error) {
     logger.error('CODE EXECUTION STREAMING: Error occurred', error);
+    
+    // Log error for flow monitoring
+    if (flowId) {
+      flowLogger.onFlowError(flowId, error as Error, {
+        userId: input.userId,
+        channelId: input.channelId,
+        query: input.message,
+        flowType: 'code-execution',
+        streamingError: true,
+        serverSideExecution: true
+      });
+    }
     
     // Handle specific error types with user-friendly messages
     const errorMessage = (error as Error).message.toLowerCase();

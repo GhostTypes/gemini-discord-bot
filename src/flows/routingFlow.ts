@@ -33,6 +33,7 @@ import { ai } from '../genkit.config.js';
 import { logger } from '../utils/logger.js';
 import { GenerationConfigBuilder } from '../utils/GenerationConfigBuilder.js';
 import { GameNameResolver } from '../services/GameNameResolver.js';
+import { flowLogger } from '../debug/flow-logger.js';
 import {
   UserIntent,
   RoutingDecisionInput,
@@ -46,9 +47,23 @@ export class RoutingFlow {
   /**
    * Determine user intent from message
    */
-  async determineIntent(input: RoutingDecisionInput): Promise<RoutingDecisionOutput> {
+  async determineIntent(input: RoutingDecisionInput, flowId?: string): Promise<RoutingDecisionOutput> {
     try {
       logger.info('Determining user intent', { message: input.message.substring(0, 50) });
+
+      if (flowId) {
+        flowLogger.logFlow(flowId, `Starting intent routing analysis`, 'info', {
+          userId: input.userId,
+          channelId: input.channelId,
+          message: input.message, // FULL MESSAGE - not trimmed!
+          messageLength: input.message.length,
+          isInGameMode: input.isInGameMode,
+          currentGameType: input.currentGameType,
+          hasConversationContext: !!input.conversationContext,
+          conversationContextLength: input.conversationContext?.length || 0,
+          routingEnabled: true
+        });
+      }
 
       // Validate input
       RoutingDecisionInputSchema.parse(input);
@@ -132,6 +147,23 @@ AUTH_ACTION: [if AUTH_*, specify the action type]
 TARGET_USER: [if AUTH_ADD_OPERATOR or AUTH_REMOVE_OPERATOR, extract @user mention]
 WHITELIST_TYPE: [if AUTH_WHITELIST_*, specify BOT or AUTONOMOUS based on context]`;
 
+      if (flowId) {
+        flowLogger.logFlow(flowId, `Starting AI model call for intent routing`, 'info', {
+          model: 'googleai/gemini-2.0-flash-lite (implicit)',
+          systemPrompt: systemPrompt,
+          userPrompt: userPrompt,
+          fullPrompt: { systemPrompt, userPrompt }, // FULL PROMPTS - not trimmed!
+          temperature: 0.3,
+          maxOutputTokens: 1024,
+          gameContext: gameContext,
+          conversationContext: input.conversationContext || 'none',
+          fullConversationContext: input.conversationContext, // FULL CONTEXT - not trimmed!
+          isInGameMode: input.isInGameMode,
+          currentGameType: input.currentGameType,
+          configUsed: GenerationConfigBuilder.build({ temperature: 0.3, maxOutputTokens: 1024 })
+        });
+      }
+
       const response = await ai.generate({
         prompt: userPrompt,
         system: systemPrompt,
@@ -190,11 +222,42 @@ WHITELIST_TYPE: [if AUTH_WHITELIST_*, specify BOT or AUTONOMOUS based on context
       // Validate output
       RoutingDecisionOutputSchema.parse(result);
 
+      // Log completion of AI model call with comprehensive statistics
+      if (flowId) {
+        flowLogger.logFlow(flowId, `AI model call completed for intent routing`, 'info', {
+          model: 'googleai/gemini-2.0-flash-lite (implicit)',
+          determinedIntent: intent,
+          fullReasoning: result.reasoning, // FULL REASONING - not trimmed!
+          entities: entities,
+          fullEntities: entities, // FULL ENTITIES - not trimmed!
+          responseLength: response.text.length,
+          fullResponse: response.text, // FULL AI RESPONSE - not trimmed!
+          routingDecision: result,
+          fullRoutingDecision: result, // FULL DECISION - not trimmed!
+          temperature: 0.3,
+          maxOutputTokens: 1024,
+          routingCompleted: true
+        });
+      }
+
       logger.info('Intent determined', { intent, reasoning: result.reasoning?.substring(0, 100) });
       return result;
 
     } catch (error) {
       logger.error('Error determining intent', error);
+      
+      // Log error for flow monitoring
+      if (flowId) {
+        flowLogger.onFlowError(flowId, error as Error, {
+          userId: input.userId,
+          channelId: input.channelId,
+          message: input.message,
+          flowType: 'intent-routing',
+          isInGameMode: input.isInGameMode,
+          currentGameType: input.currentGameType,
+          fallbackUsed: true
+        });
+      }
       
       // Safe fallback
       return {

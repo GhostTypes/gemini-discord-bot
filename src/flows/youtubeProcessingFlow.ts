@@ -30,6 +30,7 @@ import { ProcessedVideo } from '../services/VideoProcessor.js';
 import { GoogleGenAI, createUserContent } from '@google/genai';
 import { botConfig } from '../config/environment.js';
 import { GenerationConfigBuilder } from '../utils/GenerationConfigBuilder.js';
+import { flowLogger } from '../debug/flow-logger.js';
 
 const ProcessedVideoSchema = z.object({
   type: z.enum(['video']),
@@ -98,11 +99,33 @@ export const youtubeProcessingFlow = ai.defineFlow(
 // Streaming function for YouTube processing
 export async function streamYouTubeProcessingResponse(
   input: YouTubeProcessingInputType,
-  onChunk: (chunk: string) => void
+  onChunk: (chunk: string) => void,
+  flowId?: string
 ): Promise<string> {
   const { message, userId, processedVideos } = input;
 
   logger.info(`YOUTUBE FLOW: Streaming ${processedVideos.length} YouTube videos`, { userId });
+
+  if (flowId) {
+    flowLogger.logFlow(flowId, `Starting YouTube processing streaming`, 'info', {
+      userId,
+      videoCount: processedVideos.length,
+      videos: processedVideos.map(v => ({
+        type: v.type,
+        filename: v.filename,
+        size: v.size,
+        duration: v.duration,
+        isYouTube: v.isYouTube,
+        videoId: v.videoId,
+        url: v.url,
+        data: v.data
+      })), // FULL VIDEO LIST - not trimmed!
+      query: message,
+      queryLength: message.length,
+      youTubeProcessingEnabled: true,
+      directUrlAccess: true
+    });
+  }
 
   if (processedVideos.length === 0) {
     const errorResponse = 'No YouTube videos were provided for processing.';
@@ -118,13 +141,25 @@ export async function streamYouTubeProcessingResponse(
       throw new Error('Expected YouTube video but received regular video');
     }
 
-    const fullResponse = await streamYouTubeVideoProcessing(video, message, onChunk);
+    const fullResponse = await streamYouTubeVideoProcessing(video, message, onChunk, flowId);
 
     logger.debug(`YOUTUBE FLOW: Streaming completed, response length: ${fullResponse.length}`);
     return fullResponse || 'Sorry, I couldn\'t analyze the YouTube video content.';
 
   } catch (error) {
     logger.error('YouTube streaming failed', { error, userId });
+    
+    // Log error for flow monitoring
+    if (flowId) {
+      flowLogger.onFlowError(flowId, error as Error, {
+        userId,
+        videoCount: processedVideos.length,
+        query: message,
+        flowType: 'youtube-processing',
+        streamingError: true
+      });
+    }
+    
     const errorResponse = getYouTubeErrorMessage(error as Error);
     await onChunk(errorResponse);
     return errorResponse;
@@ -169,15 +204,52 @@ async function processYouTubeVideo(video: ProcessedVideo, message: string): Prom
 async function streamYouTubeVideoProcessing(
   video: ProcessedVideo, 
   message: string, 
-  onChunk: (chunk: string) => void
+  onChunk: (chunk: string) => void,
+  flowId?: string
 ): Promise<string> {
   logger.info('Streaming YouTube video processing', { videoId: video.videoId });
+
+  if (flowId) {
+    flowLogger.logFlow(flowId, `Starting YouTube video streaming analysis`, 'info', {
+      videoId: video.videoId,
+      videoUrl: video.url,
+      normalizedUrl: video.data,
+      filename: video.filename,
+      size: video.size,
+      duration: video.duration,
+      query: message,
+      queryLength: message.length,
+      youTubeProcessing: true,
+      directUrlAccess: true,
+      fileUploadRequired: false
+    });
+  }
 
   // Create GoogleGenAI client - exactly like legacy
   const genaiClient = new GoogleGenAI({ apiKey: botConfig.google.apiKey });
 
   // Normalize YouTube URL like legacy
   const normalizedUrl = video.data; // Already normalized in VideoProcessor
+
+  if (flowId) {
+    flowLogger.logFlow(flowId, `Starting AI model streaming call for YouTube video analysis`, 'info', {
+      model: botConfig.google.model,
+      temperature: 0.5,
+      maxOutputTokens: 6144,
+      videoId: video.videoId,
+      normalizedUrl: normalizedUrl,
+      userMessage: message,
+      fullContents: createUserContent([
+        {
+          fileData: {
+            fileUri: normalizedUrl, // Direct YouTube URL - no upload needed
+          },
+        },
+        message,
+      ]), // FULL CONTENTS - not trimmed!
+      configUsed: GenerationConfigBuilder.build({ temperature: 0.5, maxOutputTokens: 6144 })
+    });
+  }
 
   // Stream response generation - exactly like legacy
   const response = await genaiClient.models.generateContentStream({
@@ -206,7 +278,34 @@ async function streamYouTubeVideoProcessing(
       logger.debug(`YOUTUBE FLOW: Chunk ${chunkCount}, length: ${chunkText.length}`);
       fullResponse += chunkText;
       await onChunk(chunkText);
+
+      // Log each response chunk for flow monitoring
+      if (flowId) {
+        flowLogger.logFlow(flowId, `AI response chunk #${chunkCount} received`, 'debug', {
+          chunkNumber: chunkCount,
+          chunkLength: chunkText.length,
+          fullChunkContent: chunkText, // FULL CHUNK - not trimmed!
+          totalResponseLength: fullResponse.length,
+          videoProcessingType: 'youtube'
+        });
+      }
     }
+  }
+
+  // Log completion of AI model call with comprehensive statistics
+  if (flowId) {
+    flowLogger.logFlow(flowId, `AI model streaming call completed`, 'info', {
+      model: botConfig.google.model,
+      totalResponseChunks: chunkCount,
+      finalResponseLength: fullResponse.length,
+      fullFinalResponse: fullResponse, // FULL RESPONSE - not trimmed!
+      videoId: video.videoId,
+      normalizedUrl: normalizedUrl,
+      temperature: 0.5,
+      maxOutputTokens: 6144,
+      streamingCompleted: true,
+      videoProcessingType: 'youtube'
+    });
   }
 
   logger.debug(`YOUTUBE FLOW: Streaming completed, chunks: ${chunkCount}, response length: ${fullResponse.length}`);

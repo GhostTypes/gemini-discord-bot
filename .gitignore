@@ -87,3 +87,4 @@ prisma/migrations/**
 operators.json
 system_prompt.txt
 whitelisted_channels.json
+.genkit/*

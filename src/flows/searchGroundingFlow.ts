@@ -26,6 +26,7 @@ import {
 import { generativeService } from '../services/GenerativeService.js';
 import { logger } from '../utils/logger.js';
 import { botConfig } from '../config/environment.js';
+import { flowLogger } from '../debug/flow-logger.js';
 
 /**
  * Search Grounding Flow - Uses Google Search to provide current information
@@ -85,11 +86,21 @@ Please provide a comprehensive answer using current information from web search.
  */
 export async function streamSearchGrounding(
   input: SearchGroundingInput,
-  onChunk: (chunk: string) => Promise<void>
+  onChunk: (chunk: string) => Promise<void>,
+  flowId?: string
 ): Promise<{ responseText: string; citations: Citation[]; searchQueries: string[] }> {
   const { message, userId } = input;
 
   logger.info('SEARCH GROUNDING STREAM: Processing search request', { userId, queryLength: message.length });
+
+  if (flowId) {
+    flowLogger.logFlow(flowId, `Starting search grounding streaming`, 'info', {
+      userId,
+      query: message,
+      queryLength: message.length,
+      searchEnabled: true
+    });
+  }
 
   try {
     const systemPrompt = `You are a helpful Discord bot assistant that provides accurate, up-to-date information using web search.
@@ -98,10 +109,24 @@ Please provide a comprehensive answer using current information from web search.
     
     const userQuery = `User query: ${message}`;
 
+    if (flowId) {
+      flowLogger.logFlow(flowId, `Starting AI model streaming call for search grounding`, 'info', {
+        model: 'google-search-grounded (implicit)',
+        systemPrompt: systemPrompt,
+        userQuery: userQuery,
+        fullPrompt: { systemPrompt, userQuery }, // FULL PROMPT - not trimmed!
+        searchGroundingEnabled: true,
+        thinkingEnabled: botConfig.thinking.enabled,
+        thinkingBudget: botConfig.thinking.budget
+      });
+    }
+
     const result = await generativeService.generateSearchGroundedStream(userQuery, systemPrompt);
 
     let fullResponseText = '';
     let chunkCount = 0;
+    let thinkingChunkCount = 0;
+    let allThinkingContent = '';
 
     let finalResponse: any = null;
     
@@ -117,8 +142,31 @@ Please provide a comprehensive answer using current information from web search.
         
         logger.debug(`SEARCH GROUNDING STREAM: Processing chunk ${chunkCount}, length: ${text.length}`);
         await onChunk(text);
+
+        // Log each response chunk for flow monitoring
+        if (flowId) {
+          flowLogger.logFlow(flowId, `AI response chunk #${chunkCount} received`, 'debug', {
+            chunkNumber: chunkCount,
+            chunkLength: text.length,
+            fullChunkContent: text, // FULL CHUNK - not trimmed!
+            totalResponseLength: fullResponseText.length
+          });
+        }
       } else if (chunkAny.thoughts) {
-        logger.debug(`SEARCH GROUNDING STREAM: Processing thinking chunk (${chunkAny.thoughts.length} chars) - not streaming to user`);
+        // Log thinking activity but don't stream to user
+        thinkingChunkCount++;
+        allThinkingContent += chunkAny.thoughts;
+        logger.debug(`SEARCH GROUNDING STREAM: Processing thinking chunk ${thinkingChunkCount} (${chunkAny.thoughts.length} chars) - not streaming to user`);
+        
+        // Log thinking chunks for flow monitoring
+        if (flowId) {
+          flowLogger.logFlow(flowId, `AI thinking chunk #${thinkingChunkCount} received`, 'debug', {
+            thinkingChunkNumber: thinkingChunkCount,
+            thinkingChunkLength: chunkAny.thoughts.length,
+            fullThinkingContent: chunkAny.thoughts, // FULL THINKING - not trimmed!
+            totalThinkingLength: allThinkingContent.length
+          });
+        }
       }
       
       // Keep the last chunk for metadata extraction
@@ -126,6 +174,25 @@ Please provide a comprehensive answer using current information from web search.
     }
     const citations = extractCitationsFromResponse(finalResponse);
     const searchQueries = extractSearchQueriesFromResponse(finalResponse);
+
+    // Log completion of AI model call with comprehensive statistics
+    if (flowId) {
+      flowLogger.logFlow(flowId, `AI model streaming call completed`, 'info', {
+        model: 'google-search-grounded (implicit)',
+        totalResponseChunks: chunkCount,
+        totalThinkingChunks: thinkingChunkCount,
+        finalResponseLength: fullResponseText.length,
+        totalThinkingLength: allThinkingContent.length,
+        fullFinalResponse: fullResponseText, // FULL RESPONSE - not trimmed!
+        fullThinkingContent: allThinkingContent, // FULL THINKING - not trimmed!
+        citationCount: citations.length,
+        searchQueryCount: searchQueries.length,
+        fullCitations: citations, // FULL CITATIONS - not trimmed!
+        fullSearchQueries: searchQueries, // FULL QUERIES - not trimmed!
+        thinkingEnabled: botConfig.thinking.enabled,
+        streamingCompleted: true
+      });
+    }
 
     // Log thinking usage if enabled
     if (botConfig.thinking.enabled) {
@@ -148,6 +215,16 @@ Please provide a comprehensive answer using current information from web search.
 
   } catch (error) {
     logger.error('SEARCH GROUNDING STREAM: Error processing request', { userId, error });
+    
+    // Log error for flow monitoring
+    if (flowId) {
+      flowLogger.onFlowError(flowId, error as Error, {
+        userId,
+        query: message,
+        flowType: 'search-grounding',
+        streamingError: true
+      });
+    }
     
     const errorMessage = 'I apologize, but I encountered an error while searching for information. Please try again or rephrase your question.';
     await onChunk(errorMessage);

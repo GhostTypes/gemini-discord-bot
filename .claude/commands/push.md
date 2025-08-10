@@ -2,6 +2,8 @@
 
 You are creating a commit for the user. Follow these steps EXACTLY:
 
+The use may give optional input for you to focus on / include, if they did it will appear after this: #$ARGUMENTS
+
 1. **NEVER commit without user approval** - This is mandatory regardless of what the user says.
 
 2. **Analyze current changes** by running these git commands in parallel:

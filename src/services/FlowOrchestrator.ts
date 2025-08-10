@@ -46,6 +46,7 @@ import { ProcessedMedia } from './MediaProcessor.js';
 import { botConfig } from '../config/environment.js';
 import { gameManager } from '../flows/gameFlow.js';
 import { AuthFlow } from '../flows/authFlow.js';
+import { flowLogger } from '../debug/flow-logger.js';
 
 export class FlowOrchestrator {
   private routingFlow: RoutingFlow;
@@ -86,33 +87,72 @@ export class FlowOrchestrator {
   }
 
   async routeMessage(message: Message, cleanMessage: string, referencedMessage: Message | null, contentAnalysis: ContentAnalysis): Promise<void> {
-    // Generic cached attachment detection - if we have ANY cached attachments, route to conversation flow
-    if (contentAnalysis.attachmentCache.hasCachedData) {
-      const cachedTypes = Array.from(contentAnalysis.attachmentCache.attachmentsByType.keys());
-      logger.info('Message has cached attachments - routing to conversation flow', { 
-        cachedAttachmentCount: contentAnalysis.attachmentCache.cachedAttachments.length,
-        cachedTypes: cachedTypes.join(', ')
-      });
-      // Route to conversation flow which will use cached data for ANY attachment type
-      await this.handleConversation(message, cleanMessage, contentAnalysis.isMultimodal, referencedMessage);
-    } else if (contentAnalysis.hasPDFs) {
-      // No cached data available, use PDF processing flow with download
-      logger.info('Message routed to PDF processing (no cached data)', { pdfCount: contentAnalysis.pdfDetection.pdfUrls.length });
-      await this.handlePDFProcessing(message, cleanMessage, contentAnalysis.pdfDetection.pdfUrls);
-    } else if (contentAnalysis.hasVideos) {
-      // For videos, we don't have caching optimization yet, so always use video processing flow
-      if (contentAnalysis.videoDetection.youtubeUrls.length > 0) {
-        logger.info('Message routed to YouTube processing', { youtubeCount: contentAnalysis.videoDetection.youtubeUrls.length });
-        await this.handleYouTubeProcessing(message, cleanMessage, contentAnalysis.videoDetection);
-      } else {
-        logger.info('Message routed to video processing', { videoCount: contentAnalysis.videoDetection.attachments.length + contentAnalysis.videoDetection.videoUrls.length });
-        await this.handleVideoProcessing(message, cleanMessage, contentAnalysis.videoDetection);
-      }
+    // Start flow logging
+    const flowId = flowLogger.startFlow('MESSAGE_ROUTING', {
+      userId: message.author.id,
+      channelId: message.channelId,
+      message: cleanMessage
+    });
+
+    try {
+      // Generic cached attachment detection - if we have ANY cached attachments, route to conversation flow
+      if (contentAnalysis.attachmentCache.hasCachedData) {
+        const cachedTypes = Array.from(contentAnalysis.attachmentCache.attachmentsByType.keys());
+        logger.info('Message has cached attachments - routing to conversation flow', { 
+          cachedAttachmentCount: contentAnalysis.attachmentCache.cachedAttachments.length,
+          cachedTypes: cachedTypes.join(', ')
+        });
+        flowLogger.onRouteDecision(flowId, 'CACHED_CONVERSATION', { cachedTypes: cachedTypes.join(', ') });
+        // Start specific flow type for cached conversation
+        const cachedFlowId = flowLogger.startFlow('CACHED_CONVERSATION', {
+          userId: message.author.id,
+          channelId: message.channelId,
+          message: cleanMessage
+        });
+        await this.handleConversation(message, cleanMessage, contentAnalysis.isMultimodal, referencedMessage, cachedFlowId ?? undefined);
+        flowLogger.completeFlow(cachedFlowId, true);
+      } else if (contentAnalysis.hasPDFs) {
+        // No cached data available, use PDF processing flow with download
+        logger.info('Message routed to PDF processing (no cached data)', { pdfCount: contentAnalysis.pdfDetection.pdfUrls.length });
+        flowLogger.onRouteDecision(flowId, 'PDF_PROCESSING', { pdfCount: contentAnalysis.pdfDetection.pdfUrls.length });
+        // Start specific flow type for PDF processing
+        const pdfFlowId = flowLogger.startFlow('PDF_PROCESSING', {
+          userId: message.author.id,
+          channelId: message.channelId,
+          message: cleanMessage
+        });
+        await this.handlePDFProcessing(message, cleanMessage, contentAnalysis.pdfDetection.pdfUrls, pdfFlowId ?? undefined);
+        flowLogger.completeFlow(pdfFlowId, true);
+      } else if (contentAnalysis.hasVideos) {
+        // For videos, we don't have caching optimization yet, so always use video processing flow
+        if (contentAnalysis.videoDetection.youtubeUrls.length > 0) {
+          logger.info('Message routed to YouTube processing', { youtubeCount: contentAnalysis.videoDetection.youtubeUrls.length });
+          flowLogger.onRouteDecision(flowId, 'YOUTUBE_PROCESSING', { youtubeCount: contentAnalysis.videoDetection.youtubeUrls.length });
+          // Start specific flow type for YouTube processing
+          const youtubeFlowId = flowLogger.startFlow('YOUTUBE_PROCESSING', {
+            userId: message.author.id,
+            channelId: message.channelId,
+            message: cleanMessage
+          });
+          await this.handleYouTubeProcessing(message, cleanMessage, contentAnalysis.videoDetection, youtubeFlowId ?? undefined);
+          flowLogger.completeFlow(youtubeFlowId, true);
+        } else {
+          logger.info('Message routed to video processing', { videoCount: contentAnalysis.videoDetection.attachments.length + contentAnalysis.videoDetection.videoUrls.length });
+          flowLogger.onRouteDecision(flowId, 'VIDEO_PROCESSING', { videoCount: contentAnalysis.videoDetection.attachments.length + contentAnalysis.videoDetection.videoUrls.length });
+          // Start specific flow type for video processing
+          const videoFlowId = flowLogger.startFlow('VIDEO_PROCESSING', {
+            userId: message.author.id,
+            channelId: message.channelId,
+            message: cleanMessage
+          });
+          await this.handleVideoProcessing(message, cleanMessage, contentAnalysis.videoDetection, videoFlowId ?? undefined);
+          flowLogger.completeFlow(videoFlowId, true);
+        }
     } else {
       // Get conversation context for attachment-aware routing
       let conversationContext: string | undefined;
       try {
-        const context = await this.messageCacheService.getFormattedContext(message.channelId);
+        const context = await this.messageCacheService.getFormattedContext(message.channelId, flowId ?? undefined);
         conversationContext = context || undefined;
       } catch (error) {
         logger.debug('Could not retrieve conversation context for routing', { error });
@@ -126,30 +166,95 @@ export class FlowOrchestrator {
         isInGameMode: false,
         currentGameType: undefined,
         conversationContext,
-      });
+      }, flowId ?? undefined);
 
-      logger.info('Message routed', { intent: routingDecision.intent });
+        logger.info('Message routed', { intent: routingDecision.intent });
+        flowLogger.onRouteDecision(flowId, routingDecision.intent, routingDecision.entities);
 
-      // Handle based on AI-determined intent
-      if (routingDecision.intent === 'SEARCH_GROUNDING') {
-        await this.handleSearchGrounding(message, cleanMessage);
-      } else if (routingDecision.intent === 'URL_CONTEXT') {
-        await this.handleUrlContext(message, cleanMessage, contentAnalysis.webUrls);
-      } else if (routingDecision.intent === 'IMAGE_GENERATION') {
-        await this.handleImageGeneration(message, cleanMessage);
-      } else if (routingDecision.intent === 'CODE_EXECUTION') {
-        await this.handleCodeExecution(message, cleanMessage);
-      } else if (routingDecision.intent === 'GAME_START') {
-        await this.gameHandler.handleGameStart(message, cleanMessage, routingDecision.entities);
-      } else if (routingDecision.intent === 'GAME_HELP') {
-        await this.gameHandler.handleGameHelp(message);
-      } else if (routingDecision.intent === 'AUTH') {
-        // Route auth requests to dedicated auth flow
-        await this.handleAuthRequest(message, cleanMessage);
-      } else {
-        // Default to conversation flow (images and text)
-        await this.handleConversation(message, cleanMessage, contentAnalysis.isMultimodal, referencedMessage);
+        // Handle based on AI-determined intent
+        if (routingDecision.intent === 'SEARCH_GROUNDING') {
+          // Start specific flow type for search grounding
+          const searchFlowId = flowLogger.startFlow('SEARCH_GROUNDING', {
+            userId: message.author.id,
+            channelId: message.channelId,
+            message: cleanMessage
+          });
+          await this.handleSearchGrounding(message, cleanMessage, searchFlowId ?? undefined);
+          flowLogger.completeFlow(searchFlowId, true);
+        } else if (routingDecision.intent === 'URL_CONTEXT') {
+          // Start specific flow type for URL context
+          const urlFlowId = flowLogger.startFlow('URL_CONTEXT', {
+            userId: message.author.id,
+            channelId: message.channelId,
+            message: cleanMessage
+          });
+          await this.handleUrlContext(message, cleanMessage, contentAnalysis.webUrls, urlFlowId ?? undefined);
+          flowLogger.completeFlow(urlFlowId, true);
+        } else if (routingDecision.intent === 'IMAGE_GENERATION') {
+          // Start specific flow type for image generation
+          const imageFlowId = flowLogger.startFlow('IMAGE_GENERATION', {
+            userId: message.author.id,
+            channelId: message.channelId,
+            message: cleanMessage
+          });
+          await this.handleImageGeneration(message, cleanMessage);
+          flowLogger.completeFlow(imageFlowId, true);
+        } else if (routingDecision.intent === 'CODE_EXECUTION') {
+          // Start specific flow type for code execution
+          const codeFlowId = flowLogger.startFlow('CODE_EXECUTION', {
+            userId: message.author.id,
+            channelId: message.channelId,
+            message: cleanMessage
+          });
+          await this.handleCodeExecution(message, cleanMessage, codeFlowId ?? undefined);
+          flowLogger.completeFlow(codeFlowId, true);
+        } else if (routingDecision.intent === 'GAME_START') {
+          // Start specific flow type for game
+          const gameFlowId = flowLogger.startFlow('GAME_START', {
+            userId: message.author.id,
+            channelId: message.channelId,
+            message: cleanMessage
+          });
+          await this.gameHandler.handleGameStart(message, cleanMessage, routingDecision.entities);
+          flowLogger.completeFlow(gameFlowId, true);
+        } else if (routingDecision.intent === 'GAME_HELP') {
+          // Start specific flow type for game help
+          const gameHelpFlowId = flowLogger.startFlow('GAME_HELP', {
+            userId: message.author.id,
+            channelId: message.channelId,
+            message: cleanMessage
+          });
+          await this.gameHandler.handleGameHelp(message);
+          flowLogger.completeFlow(gameHelpFlowId, true);
+        } else if (routingDecision.intent === 'AUTH') {
+          // Start specific flow type for auth
+          const authFlowId = flowLogger.startFlow('AUTH', {
+            userId: message.author.id,
+            channelId: message.channelId,
+            message: cleanMessage
+          });
+          await this.handleAuthRequest(message, cleanMessage);
+          flowLogger.completeFlow(authFlowId, true);
+        } else {
+          // Start specific flow type for conversation
+          const conversationFlowId = flowLogger.startFlow('CONVERSATION', {
+            userId: message.author.id,
+            channelId: message.channelId,
+            message: cleanMessage
+          });
+          await this.handleConversation(message, cleanMessage, contentAnalysis.isMultimodal, referencedMessage, conversationFlowId ?? undefined);
+          flowLogger.completeFlow(conversationFlowId, true);
+        }
       }
+
+      // Complete the flow successfully
+      flowLogger.completeFlow(flowId, true);
+
+    } catch (error) {
+      // Log the error and complete the flow with failure
+      flowLogger.onFlowError(flowId, error as Error, { cleanMessage, userId: message.author.id });
+      flowLogger.completeFlow(flowId, false, error as Error | null);
+      throw error; // Re-throw to maintain existing error handling
     }
   }
 
@@ -231,7 +336,7 @@ export class FlowOrchestrator {
     }
   }
 
-  async handleVideoProcessing(message: Message, cleanMessage: string, videoDetection: { attachments: any[], videoUrls: string[], youtubeUrls: string[] }): Promise<void> {
+  async handleVideoProcessing(message: Message, cleanMessage: string, videoDetection: { attachments: any[], videoUrls: string[], youtubeUrls: string[] }, _flowId?: string): Promise<void> {
     let streamingHandler: StreamingHandler | null = null;
     
     try {
@@ -265,7 +370,7 @@ export class FlowOrchestrator {
         message: cleanMessage,
         userId: message.author.id,
         processedVideos: processedVideos,
-      }, handleChunk);
+      }, handleChunk, _flowId);
 
       // Finalize the streaming response
       if (streamingHandler) {
@@ -286,7 +391,7 @@ export class FlowOrchestrator {
     }
   }
 
-  async handleYouTubeProcessing(message: Message, cleanMessage: string, videoDetection: { attachments: any[], videoUrls: string[], youtubeUrls: string[] }): Promise<void> {
+  async handleYouTubeProcessing(message: Message, cleanMessage: string, videoDetection: { attachments: any[], videoUrls: string[], youtubeUrls: string[] }, _flowId?: string): Promise<void> {
     let streamingHandler: StreamingHandler | null = null;
     
     try {
@@ -318,7 +423,7 @@ export class FlowOrchestrator {
         message: cleanMessage,
         userId: message.author.id,
         processedVideos: processedVideos,
-      }, handleChunk);
+      }, handleChunk, _flowId);
 
       // Finalize the streaming response
       if (streamingHandler) {
@@ -339,7 +444,7 @@ export class FlowOrchestrator {
     }
   }
 
-  async handleConversation(message: Message, cleanMessage: string, isMultimodal: boolean = false, referencedMessage: Message | null = null): Promise<void> {
+  async handleConversation(message: Message, cleanMessage: string, isMultimodal: boolean = false, referencedMessage: Message | null = null, flowId?: string): Promise<void> {
     let streamingHandler: StreamingHandler | null = null;
     
     try {
@@ -370,7 +475,7 @@ export class FlowOrchestrator {
       // PRIORITY 3: Check conversation context if no direct media processed
       if (processedMedia.length === 0) {
         try {
-          const context = await this.messageCacheService.getFormattedContext(message.channelId);
+          const context = await this.messageCacheService.getFormattedContext(message.channelId, flowId ?? undefined);
           const contextHasAttachments = context?.includes('Attachments:') || false;
           
           if (contextHasAttachments) {
@@ -398,11 +503,16 @@ export class FlowOrchestrator {
         });
       }
 
+      // Log media processing if we have processed media
+      if (processedMedia.length > 0 && flowId) {
+        flowLogger.onMediaProcessing(flowId, 'multimodal', processedMedia.length);
+      }
+
       // Create a callback that maintains state properly
       const handleChunk = async (chunk: string) => {
         if (!streamingHandler) {
           const initialReply = await message.reply(chunk);
-          streamingHandler = new StreamingHandler(initialReply);
+          streamingHandler = new StreamingHandler(initialReply, flowId);
         } else {
           streamingHandler.onChunk(chunk);
         }
@@ -423,6 +533,7 @@ export class FlowOrchestrator {
           processedMedia: processedMedia,
           channelId: message.channel.id,
           messageCacheService: this.messageCacheService,
+          flowId: flowId,
         }, handleChunk);
       } else {
         // Use regular chat flow for text-only
@@ -437,7 +548,7 @@ export class FlowOrchestrator {
           userId: message.author.id,
           channelId: message.channel.id,
           messageCacheService: this.messageCacheService,
-        }, handleChunk);
+        }, handleChunk, flowId);
       }
 
       // Finalize the streaming response
@@ -459,7 +570,7 @@ export class FlowOrchestrator {
     }
   }
 
-  async handleCodeExecution(message: Message, cleanMessage: string): Promise<void> {
+  async handleCodeExecution(message: Message, cleanMessage: string, _flowId?: string): Promise<void> {
     try {
       logger.info('CODE EXECUTION: Handling code execution request', { 
         userId: message.author.id,
@@ -481,7 +592,7 @@ export class FlowOrchestrator {
           message: cleanMessage,
           userId: message.author.id,
           channelId: message.channelId,
-        }, handleChunk);
+        }, handleChunk, _flowId);
 
         // Finalize the streaming
         await streamingHandler.finalize();
@@ -518,7 +629,7 @@ export class FlowOrchestrator {
     }
   }
 
-  async handlePDFProcessing(message: Message, cleanMessage: string, pdfUrls: string[]): Promise<void> {
+  async handlePDFProcessing(message: Message, cleanMessage: string, pdfUrls: string[], _flowId?: string): Promise<void> {
     let streamingHandler: StreamingHandler | null = null;
     
     try {
@@ -544,7 +655,7 @@ export class FlowOrchestrator {
         pdfUrls: pdfUrls,
         userId: message.author.id,
         channelId: message.channelId,
-      }, handleChunk);
+      }, handleChunk, _flowId);
 
       // Finalize the streaming response
       if (streamingHandler) {
@@ -571,7 +682,7 @@ export class FlowOrchestrator {
     }
   }
 
-  async handleSearchGrounding(message: Message, cleanMessage: string): Promise<void> {
+  async handleSearchGrounding(message: Message, cleanMessage: string, _flowId?: string): Promise<void> {
     let streamingHandler: StreamingHandler | null = null;
     
     try {
@@ -594,7 +705,7 @@ export class FlowOrchestrator {
       const result = await streamSearchGrounding({
         message: cleanMessage,
         userId: message.author.id,
-      }, handleChunk);
+      }, handleChunk, _flowId);
 
       // Add citations if available
       if (result.citations && result.citations.length > 0 && streamingHandler) {
@@ -630,7 +741,7 @@ export class FlowOrchestrator {
     }
   }
 
-  async handleUrlContext(message: Message, cleanMessage: string, urls: string[]): Promise<void> {
+  async handleUrlContext(message: Message, cleanMessage: string, urls: string[], _flowId?: string): Promise<void> {
     let streamingHandler: StreamingHandler | null = null;
     
     try {
@@ -669,7 +780,7 @@ export class FlowOrchestrator {
         message: UrlDetector.removeUrls(cleanMessage) || 'Please analyze these URLs:',
         urls: validUrls,
         userId: message.author.id,
-      }, handleChunk);
+      }, handleChunk, _flowId);
 
       // Finalize the streaming response
       if (streamingHandler) {

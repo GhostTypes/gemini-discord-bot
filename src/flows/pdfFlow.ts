@@ -37,6 +37,7 @@ import { z } from 'zod';
 import { logger } from '../utils/logger.js';
 import { GenerationConfigBuilder } from '../utils/GenerationConfigBuilder.js';
 import { botConfig } from '../config/environment.js';
+import { flowLogger } from '../debug/flow-logger.js';
 
 // PDF processing input schema
 const PDFInput = z.object({
@@ -233,7 +234,8 @@ Please analyze the PDF document and provide a helpful response. Keep your respon
  */
 export async function streamPDFResponse(
   input: PDFInputType,
-  onChunk: (chunk: string) => Promise<void>
+  onChunk: (chunk: string) => Promise<void>,
+  flowId?: string
 ): Promise<string> {
   const { message, pdfUrls, userId } = input;
 
@@ -243,10 +245,40 @@ export async function streamPDFResponse(
     messageLength: message.length 
   });
 
+  if (flowId) {
+    flowLogger.logFlow(flowId, `Starting PDF processing streaming`, 'info', {
+      userId,
+      pdfCount: pdfUrls.length,
+      pdfUrls: pdfUrls, // FULL URL LIST - not trimmed!
+      query: message,
+      queryLength: message.length,
+      pdfProcessingEnabled: true
+    });
+  }
+
   try {
     // Process the first PDF (extend later for multiple PDFs)
     const pdfUrl = pdfUrls[0];
+
+    if (flowId) {
+      flowLogger.logFlow(flowId, `Starting PDF download and conversion`, 'info', {
+        pdfUrl: pdfUrl,
+        securityValidation: true,
+        domainWhitelist: 'Discord CDN only'
+      });
+    }
+
     const { data: pdfData, filename } = await downloadAndConvertPDFToBase64(pdfUrl);
+
+    if (flowId) {
+      flowLogger.logFlow(flowId, `PDF download and conversion completed`, 'info', {
+        pdfUrl: pdfUrl,
+        filename: filename || 'unknown',
+        pdfDataLength: pdfData.length,
+        base64Encoded: true,
+        securityPassed: true
+      });
+    }
 
     logger.info('PDF FLOW: Starting PDF analysis stream', { userId, filename });
 
@@ -264,6 +296,21 @@ Please analyze the PDF document and provide a helpful response. Keep your respon
       }
     ];
 
+    if (flowId) {
+      flowLogger.logFlow(flowId, `Starting AI model streaming call for PDF analysis`, 'info', {
+        model: 'googleai/gemini-2.0-flash-lite (implicit)',
+        temperature: 0.3,
+        maxOutputTokens: 3000,
+        promptParts: prompt.length,
+        fullPrompt: prompt, // FULL PROMPT - not trimmed! (Note: pdfData is huge but preserved)
+        pdfFilename: filename || 'unknown',
+        pdfDataLength: pdfData.length,
+        thinkingEnabled: botConfig.thinking.enabled,
+        thinkingBudget: botConfig.thinking.budget,
+        configUsed: GenerationConfigBuilder.build({ temperature: 0.3, maxOutputTokens: 3000 })
+      });
+    }
+
     const { stream } = await ai.generateStream({
       prompt,
       config: GenerationConfigBuilder.build({
@@ -274,6 +321,8 @@ Please analyze the PDF document and provide a helpful response. Keep your respon
 
     let fullResponse = '';
     let chunkCount = 0;
+    let thinkingChunkCount = 0;
+    let allThinkingContent = '';
     
     for await (const chunk of stream) {
       // CRITICAL: Filter out thinking chunks, only process final response text
@@ -283,10 +332,51 @@ Please analyze the PDF document and provide a helpful response. Keep your respon
         logger.debug(`PDF FLOW: Processing response chunk ${chunkCount}, length: ${chunk.text.length}`);
         fullResponse += chunk.text;
         await onChunk(chunk.text);
+
+        // Log each response chunk for flow monitoring
+        if (flowId) {
+          flowLogger.logFlow(flowId, `AI response chunk #${chunkCount} received`, 'debug', {
+            chunkNumber: chunkCount,
+            chunkLength: chunk.text.length,
+            fullChunkContent: chunk.text, // FULL CHUNK - not trimmed!
+            totalResponseLength: fullResponse.length
+          });
+        }
       } else if (chunkAny.thoughts) {
         // Log thinking activity but don't stream to user
-        logger.debug(`PDF FLOW: Processing thinking chunk (${chunkAny.thoughts.length} chars) - not streaming to user`);
+        thinkingChunkCount++;
+        allThinkingContent += chunkAny.thoughts;
+        logger.debug(`PDF FLOW: Processing thinking chunk ${thinkingChunkCount} (${chunkAny.thoughts.length} chars) - not streaming to user`);
+        
+        // Log thinking chunks for flow monitoring
+        if (flowId) {
+          flowLogger.logFlow(flowId, `AI thinking chunk #${thinkingChunkCount} received`, 'debug', {
+            thinkingChunkNumber: thinkingChunkCount,
+            thinkingChunkLength: chunkAny.thoughts.length,
+            fullThinkingContent: chunkAny.thoughts, // FULL THINKING - not trimmed!
+            totalThinkingLength: allThinkingContent.length
+          });
+        }
       }
+    }
+
+    // Log completion of AI model call with comprehensive statistics
+    if (flowId) {
+      flowLogger.logFlow(flowId, `AI model streaming call completed`, 'info', {
+        model: 'googleai/gemini-2.0-flash-lite (implicit)',
+        totalResponseChunks: chunkCount,
+        totalThinkingChunks: thinkingChunkCount,
+        finalResponseLength: fullResponse.length,
+        totalThinkingLength: allThinkingContent.length,
+        fullFinalResponse: fullResponse, // FULL RESPONSE - not trimmed!
+        fullThinkingContent: allThinkingContent, // FULL THINKING - not trimmed!
+        pdfFilename: filename || 'unknown',
+        pdfDataLength: pdfData.length,
+        temperature: 0.3,
+        maxOutputTokens: 3000,
+        thinkingEnabled: botConfig.thinking.enabled,
+        streamingCompleted: true
+      });
     }
 
     // Log thinking usage if enabled
@@ -305,6 +395,17 @@ Please analyze the PDF document and provide a helpful response. Keep your respon
 
   } catch (error) {
     logger.error('PDF FLOW: Streaming failed', { error, userId });
+    
+    // Log error for flow monitoring
+    if (flowId) {
+      flowLogger.onFlowError(flowId, error as Error, {
+        userId,
+        pdfUrls: pdfUrls,
+        query: message,
+        flowType: 'pdf-processing',
+        streamingError: true
+      });
+    }
     
     // Return user-friendly error message
     if (error instanceof Error) {

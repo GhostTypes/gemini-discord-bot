@@ -25,6 +25,7 @@ import {
 import { generativeService } from '../services/GenerativeService.js';
 import { logger } from '../utils/logger.js';
 import { botConfig } from '../config/environment.js';
+import { flowLogger } from '../debug/flow-logger.js';
 
 /**
  * URL Context Flow - Analyzes specific URLs provided by users
@@ -87,7 +88,8 @@ ${urlList}`;
  */
 export async function streamUrlContext(
   input: UrlContextInput,
-  onChunk: (chunk: string) => Promise<void>
+  onChunk: (chunk: string) => Promise<void>,
+  flowId?: string
 ): Promise<{ responseText: string; processedUrls: string[] }> {
   const { message, urls, userId } = input;
 
@@ -96,6 +98,17 @@ export async function streamUrlContext(
     urlCount: urls.length,
     messageLength: message.length 
   });
+
+  if (flowId) {
+    flowLogger.logFlow(flowId, `Starting URL context streaming analysis`, 'info', {
+      userId,
+      urlCount: urls.length,
+      urls: urls, // FULL URL LIST - not trimmed!
+      query: message,
+      queryLength: message.length,
+      urlContextEnabled: true
+    });
+  }
 
   try {
     const urlList = urls.map((url, index) => `${index + 1}. ${url}`).join('\n');
@@ -110,10 +123,25 @@ IMPORTANT: Do not include or repeat the URLs in your response as this causes unw
 URLs to analyze:
 ${urlList}`;
 
+    if (flowId) {
+      flowLogger.logFlow(flowId, `Starting AI model streaming call for URL context analysis`, 'info', {
+        model: 'google-url-context (implicit)',
+        systemPrompt: systemPrompt,
+        userPrompt: userPrompt,
+        fullPrompt: { systemPrompt, userPrompt }, // FULL PROMPT - not trimmed!
+        urlList: urlList, // FULL URL LIST - not trimmed!
+        urlContextEnabled: true,
+        thinkingEnabled: botConfig.thinking.enabled,
+        thinkingBudget: botConfig.thinking.budget
+      });
+    }
+
     const result = await generativeService.generateUrlContextStream(userPrompt, systemPrompt);
 
     let fullResponseText = '';
     let chunkCount = 0;
+    let thinkingChunkCount = 0;
+    let allThinkingContent = '';
 
     // Stream the response text (result is the async generator)
     for await (const chunk of result) {
@@ -127,9 +155,49 @@ ${urlList}`;
         
         logger.debug(`URL CONTEXT STREAM: Processing chunk ${chunkCount}, length: ${text.length}`);
         await onChunk(text);
+
+        // Log each response chunk for flow monitoring
+        if (flowId) {
+          flowLogger.logFlow(flowId, `AI response chunk #${chunkCount} received`, 'debug', {
+            chunkNumber: chunkCount,
+            chunkLength: text.length,
+            fullChunkContent: text, // FULL CHUNK - not trimmed!
+            totalResponseLength: fullResponseText.length
+          });
+        }
       } else if (chunkAny.thoughts) {
-        logger.debug(`URL CONTEXT STREAM: Processing thinking chunk (${chunkAny.thoughts.length} chars) - not streaming to user`);
+        // Log thinking activity but don't stream to user
+        thinkingChunkCount++;
+        allThinkingContent += chunkAny.thoughts;
+        logger.debug(`URL CONTEXT STREAM: Processing thinking chunk ${thinkingChunkCount} (${chunkAny.thoughts.length} chars) - not streaming to user`);
+        
+        // Log thinking chunks for flow monitoring
+        if (flowId) {
+          flowLogger.logFlow(flowId, `AI thinking chunk #${thinkingChunkCount} received`, 'debug', {
+            thinkingChunkNumber: thinkingChunkCount,
+            thinkingChunkLength: chunkAny.thoughts.length,
+            fullThinkingContent: chunkAny.thoughts, // FULL THINKING - not trimmed!
+            totalThinkingLength: allThinkingContent.length
+          });
+        }
       }
+    }
+
+    // Log completion of AI model call with comprehensive statistics
+    if (flowId) {
+      flowLogger.logFlow(flowId, `AI model streaming call completed`, 'info', {
+        model: 'google-url-context (implicit)',
+        totalResponseChunks: chunkCount,
+        totalThinkingChunks: thinkingChunkCount,
+        finalResponseLength: fullResponseText.length,
+        totalThinkingLength: allThinkingContent.length,
+        fullFinalResponse: fullResponseText, // FULL RESPONSE - not trimmed!
+        fullThinkingContent: allThinkingContent, // FULL THINKING - not trimmed!
+        processedUrlCount: urls.length,
+        fullProcessedUrls: urls, // FULL URL LIST - not trimmed!
+        thinkingEnabled: botConfig.thinking.enabled,
+        streamingCompleted: true
+      });
     }
 
     // Log thinking usage if enabled
@@ -151,6 +219,17 @@ ${urlList}`;
 
   } catch (error) {
     logger.error('URL CONTEXT STREAM: Error processing request', { userId, urls, error });
+    
+    // Log error for flow monitoring
+    if (flowId) {
+      flowLogger.onFlowError(flowId, error as Error, {
+        userId,
+        urls: urls,
+        query: message,
+        flowType: 'url-context',
+        streamingError: true
+      });
+    }
     
     const errorMessage = 'I apologize, but I encountered an error while analyzing the provided URLs. Please check that the URLs are accessible and try again.';
     await onChunk(errorMessage);

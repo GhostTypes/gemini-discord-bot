@@ -38,6 +38,7 @@ import { z } from 'zod';
 import { logger } from '../utils/logger.js';
 import { GenerationConfigBuilder } from '../utils/GenerationConfigBuilder.js';
 import { botConfig } from '../config/environment.js';
+import { flowLogger } from '../debug/flow-logger.js';
 
 const ProcessedMediaSchema = z.object({
   type: z.enum(['image', 'video', 'pdf', 'text']),
@@ -53,6 +54,7 @@ const MultimodalChatInput = z.object({
   processedMedia: z.array(ProcessedMediaSchema),
   channelId: z.string(),
   messageCacheService: z.any(), // MessageCacheService instance
+  flowId: z.string().optional(), // Flow ID for logging
 });
 
 const MultimodalChatOutput = z.object({
@@ -68,27 +70,61 @@ export const multimodalChatFlow = ai.defineFlow(
     outputSchema: MultimodalChatOutput,
   },
   async (input: MultimodalChatInputType) => {
-    const { message, userId, processedMedia, channelId, messageCacheService } = input;
+    const { message, userId, processedMedia, channelId, messageCacheService, flowId } = input;
 
     logger.info(`MULTIMODAL FLOW: Processing ${processedMedia.length} media items`, { userId, channelId });
+
+    if (flowId) {
+      flowLogger.logFlow(flowId, `Starting multimodal chat processing`, 'info', {
+        mediaCount: processedMedia.length,
+        mediaTypes: processedMedia.map(m => m.type),
+        userId,
+        channelId,
+        originalMessage: message
+      });
+    }
 
     // Get context using the same logic as streamMultimodalChatResponse
     let optimizedContext: string;
     
     if (botConfig.rag.enabled) {
       try {
+        if (flowId) {
+          flowLogger.logFlow(flowId, `Starting RAG optimization for context`, 'info', {
+            maxContextMessages: botConfig.rag.maxContextMessages
+          });
+        }
+
         const { formattedContext } = await messageCacheService.getOptimizedContext(
           channelId,
           message,
-          botConfig.rag.maxContextMessages
+          botConfig.rag.maxContextMessages,
+          flowId
         );
         optimizedContext = formattedContext;
+
+        if (flowId) {
+          flowLogger.logFlow(flowId, `RAG optimization completed`, 'info', {
+            contextLength: formattedContext.length,
+            optimizedContext: formattedContext // FULL CONTEXT - not trimmed!
+          });
+        }
       } catch (error) {
         logger.warn('MULTIMODAL FLOW: RAG optimization failed, using regular context', error);
-        optimizedContext = await messageCacheService.getFormattedContext(channelId);
+        
+        if (flowId) {
+          flowLogger.logFlow(flowId, `RAG optimization failed, falling back to regular context`, 'warn', {
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+
+        optimizedContext = await messageCacheService.getFormattedContext(channelId, flowId);
       }
     } else {
-      optimizedContext = await messageCacheService.getFormattedContext(channelId);
+      if (flowId) {
+        flowLogger.logFlow(flowId, `RAG disabled, using regular context`, 'info');
+      }
+      optimizedContext = await messageCacheService.getFormattedContext(channelId, flowId);
     }
 
     // Build text content with conversation context
@@ -128,7 +164,7 @@ export async function streamMultimodalChatResponse(
   input: MultimodalChatInputType,
   onChunk: (chunk: string) => void
 ): Promise<string> {
-  const { message, userId, processedMedia, channelId, messageCacheService } = input;
+  const { message, userId, processedMedia, channelId, messageCacheService, flowId } = input;
 
   logger.info(`MULTIMODAL FLOW: Streaming ${processedMedia.length} media items`, { 
     userId,
@@ -136,15 +172,34 @@ export async function streamMultimodalChatResponse(
     ragEnabled: botConfig.rag.enabled
   });
 
+  if (flowId) {
+    flowLogger.logFlow(flowId, `Starting streaming multimodal response`, 'info', {
+      mediaCount: processedMedia.length,
+      mediaTypes: processedMedia.map(m => m.type),
+      ragEnabled: botConfig.rag.enabled,
+      userId,
+      channelId,
+      originalMessage: message,
+      fullProcessedMedia: processedMedia // FULL media data - not trimmed!
+    });
+  }
+
   // Get context using RAG optimization if enabled
   let optimizedContext: string;
   
   if (botConfig.rag.enabled) {
     try {
+      if (flowId) {
+        flowLogger.logFlow(flowId, `Starting RAG optimization for streaming`, 'info', {
+          maxContextMessages: botConfig.rag.maxContextMessages
+        });
+      }
+
       const { formattedContext, optimizationResult } = await messageCacheService.getOptimizedContext(
         channelId,
         message,
-        botConfig.rag.maxContextMessages
+        botConfig.rag.maxContextMessages,
+        flowId
       );
       
       optimizedContext = formattedContext;
@@ -155,13 +210,35 @@ export async function streamMultimodalChatResponse(
         optimizedMessages: optimizationResult.messages.length,
         optimizationApplied: optimizationResult.tokenSavings > 0
       });
+
+      if (flowId) {
+        flowLogger.logFlow(flowId, `RAG optimization completed for streaming`, 'info', {
+          tokenSavings: Math.round(optimizationResult.tokenSavings),
+          originalMessages: optimizationResult.messages.length,
+          optimizedMessages: optimizationResult.messages.length,
+          optimizationApplied: optimizationResult.tokenSavings > 0,
+          fullOptimizedContext: formattedContext, // FULL OPTIMIZED CONTEXT - not trimmed!
+          fullOptimizationResult: optimizationResult // FULL result data
+        });
+      }
     } catch (error) {
       logger.warn('MULTIMODAL FLOW: RAG optimization failed, using regular context', error);
-      optimizedContext = await messageCacheService.getFormattedContext(channelId);
+      
+      if (flowId) {
+        flowLogger.logFlow(flowId, `RAG optimization failed for streaming, using fallback`, 'warn', {
+          error: error instanceof Error ? error.message : String(error),
+          fallbackUsed: true
+        });
+      }
+
+      optimizedContext = await messageCacheService.getFormattedContext(channelId, flowId);
     }
   } else {
+    if (flowId) {
+      flowLogger.logFlow(flowId, `RAG disabled for streaming, using regular context`, 'info');
+    }
     // Use regular formatted context when RAG is disabled
-    optimizedContext = await messageCacheService.getFormattedContext(channelId);
+    optimizedContext = await messageCacheService.getFormattedContext(channelId, flowId);
   }
 
   // Build text content with conversation context
@@ -189,6 +266,18 @@ export async function streamMultimodalChatResponse(
     dataSizes: processedMedia.map(m => m.data.length)
   });
 
+  if (flowId) {
+    flowLogger.logFlow(flowId, `Starting AI model streaming call for multimodal response`, 'info', {
+      model: 'googleai/gemini-2.0-flash-lite (implicit)',
+      maxOutputTokens: 8192,
+      promptParts: prompt.length,
+      fullPrompt: prompt, // FULL PROMPT - not trimmed!
+      thinkingEnabled: botConfig.thinking.enabled,
+      thinkingBudget: botConfig.thinking.budget,
+      configUsed: GenerationConfigBuilder.build({ maxOutputTokens: 8192 })
+    });
+  }
+
   const { stream } = await ai.generateStream({
     prompt: [
       { text: 'You are a helpful Discord bot assistant.' },
@@ -201,6 +290,8 @@ export async function streamMultimodalChatResponse(
 
   let fullResponse = '';
   let chunkCount = 0;
+  let thinkingChunkCount = 0;
+  let allThinkingContent = '';
   
   for await (const chunk of stream) {
     // CRITICAL: Filter out thinking chunks, only process final response text
@@ -210,10 +301,48 @@ export async function streamMultimodalChatResponse(
       logger.debug(`MULTIMODAL FLOW: Processing response chunk ${chunkCount}, length: ${chunk.text.length}`);
       fullResponse += chunk.text;
       await onChunk(chunk.text);
+      
+      // Log each response chunk for flow monitoring
+      if (flowId) {
+        flowLogger.logFlow(flowId, `AI response chunk #${chunkCount} received`, 'debug', {
+          chunkNumber: chunkCount,
+          chunkLength: chunk.text.length,
+          fullChunkContent: chunk.text, // FULL CHUNK - not trimmed!
+          totalResponseLength: fullResponse.length
+        });
+      }
     } else if (chunkAny.thoughts) {
       // Log thinking activity but don't stream to user
-      logger.debug(`MULTIMODAL FLOW: Processing thinking chunk (${chunkAny.thoughts.length} chars) - not streaming to user`);
+      thinkingChunkCount++;
+      allThinkingContent += chunkAny.thoughts;
+      logger.debug(`MULTIMODAL FLOW: Processing thinking chunk ${thinkingChunkCount} (${chunkAny.thoughts.length} chars) - not streaming to user`);
+      
+      // Log thinking chunks for flow monitoring
+      if (flowId) {
+        flowLogger.logFlow(flowId, `AI thinking chunk #${thinkingChunkCount} received`, 'debug', {
+          thinkingChunkNumber: thinkingChunkCount,
+          thinkingChunkLength: chunkAny.thoughts.length,
+          fullThinkingContent: chunkAny.thoughts, // FULL THINKING - not trimmed!
+          totalThinkingLength: allThinkingContent.length
+        });
+      }
     }
+  }
+
+  // Log completion of AI model call with comprehensive statistics
+  if (flowId) {
+    flowLogger.logFlow(flowId, `AI model streaming call completed`, 'info', {
+      model: 'googleai/gemini-2.0-flash-lite (implicit)',
+      totalResponseChunks: chunkCount,
+      totalThinkingChunks: thinkingChunkCount,
+      finalResponseLength: fullResponse.length,
+      totalThinkingLength: allThinkingContent.length,
+      fullFinalResponse: fullResponse, // FULL RESPONSE - not trimmed!
+      fullThinkingContent: allThinkingContent, // FULL THINKING - not trimmed!
+      thinkingEnabled: botConfig.thinking.enabled,
+      maxOutputTokens: 8192,
+      streamingCompleted: true
+    });
   }
 
   // Log thinking usage if enabled

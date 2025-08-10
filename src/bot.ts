@@ -24,6 +24,9 @@
 import './genkit.config.js';
 import { DiscordBot } from './services/DiscordBot.js';
 import { logger } from './utils/logger.js';
+import { botConfig } from './config/environment.js';
+import { flowMonitor } from './debug/flow-monitor.js';
+import { flowLogger } from './debug/flow-logger.js';
 import './flows/chatFlow.js';
 import './flows/ttsFlow.js';
 
@@ -33,6 +36,13 @@ let bot: DiscordBot | null = null;
 async function main(): Promise<void> {
   try {
     logger.info('Starting Discord bot with Genkit integration...');
+
+    // Initialize flow monitoring if enabled
+    if (botConfig.debug.flowMonitorEnabled) {
+      flowMonitor.start(botConfig.debug.flowMonitorPort);
+      flowLogger.initialize(flowMonitor);
+      logger.info(`Flow Monitor started on http://localhost:${botConfig.debug.flowMonitorPort}`);
+    }
 
     // Initialize flows (registers them with Genkit)
     logger.info('Registering Genkit flows...');

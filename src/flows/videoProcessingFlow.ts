@@ -31,6 +31,7 @@ import { ProcessedVideo } from '../services/VideoProcessor.js';
 import { GoogleGenAI, createUserContent, createPartFromUri } from '@google/genai';
 import { botConfig } from '../config/environment.js';
 import { GenerationConfigBuilder } from '../utils/GenerationConfigBuilder.js';
+import { flowLogger } from '../debug/flow-logger.js';
 import * as fs from 'fs/promises';
 import { createWriteStream } from 'fs';
 import * as path from 'path';
@@ -107,11 +108,31 @@ export const videoProcessingFlow = ai.defineFlow(
 // Streaming function for video processing
 export async function streamVideoProcessingResponse(
   input: VideoProcessingInputType,
-  onChunk: (chunk: string) => void
+  onChunk: (chunk: string) => void,
+  flowId?: string
 ): Promise<string> {
   const { message, userId, processedVideos } = input;
 
   logger.info(`VIDEO FLOW: Streaming ${processedVideos.length} videos`, { userId });
+
+  if (flowId) {
+    flowLogger.logFlow(flowId, `Starting video processing streaming`, 'info', {
+      userId,
+      videoCount: processedVideos.length,
+      videos: processedVideos.map(v => ({
+        type: v.type,
+        filename: v.filename,
+        size: v.size,
+        duration: v.duration,
+        isYouTube: v.isYouTube,
+        videoId: v.videoId,
+        url: v.url
+      })), // FULL VIDEO LIST - not trimmed!
+      query: message,
+      queryLength: message.length,
+      videoProcessingEnabled: true
+    });
+  }
 
   if (processedVideos.length === 0) {
     const errorResponse = 'No videos were provided for processing.';
@@ -126,9 +147,9 @@ export async function streamVideoProcessingResponse(
     let fullResponse: string;
     
     if (video.isYouTube) {
-      fullResponse = await streamYouTubeVideoProcessing(video, message, onChunk);
+      fullResponse = await streamYouTubeVideoProcessing(video, message, onChunk, flowId);
     } else {
-      fullResponse = await streamRegularVideoProcessing(video, message, onChunk);
+      fullResponse = await streamRegularVideoProcessing(video, message, onChunk, flowId);
     }
 
     logger.debug(`VIDEO FLOW: Streaming completed, response length: ${fullResponse.length}`);
@@ -136,6 +157,18 @@ export async function streamVideoProcessingResponse(
 
   } catch (error) {
     logger.error('Video streaming failed', { error, userId });
+    
+    // Log error for flow monitoring
+    if (flowId) {
+      flowLogger.onFlowError(flowId, error as Error, {
+        userId,
+        videoCount: processedVideos.length,
+        query: message,
+        flowType: 'video-processing',
+        streamingError: true
+      });
+    }
+    
     const errorResponse = getVideoErrorMessage(error as Error);
     await onChunk(errorResponse);
     return errorResponse;
@@ -265,9 +298,24 @@ async function processRegularVideo(video: ProcessedVideo, message: string): Prom
 async function streamYouTubeVideoProcessing(
   video: ProcessedVideo, 
   message: string, 
-  onChunk: (chunk: string) => void
+  onChunk: (chunk: string) => void,
+  flowId?: string
 ): Promise<string> {
   logger.info('Streaming YouTube video processing', { videoId: video.videoId });
+
+  if (flowId) {
+    flowLogger.logFlow(flowId, `Starting YouTube video streaming analysis`, 'info', {
+      videoId: video.videoId,
+      videoUrl: video.data,
+      filename: video.filename,
+      size: video.size,
+      duration: video.duration,
+      query: message,
+      queryLength: message.length,
+      youTubeProcessing: true,
+      directUrlAccess: true
+    });
+  }
 
   const prompt = [
     { text: message },
@@ -277,6 +325,25 @@ async function streamYouTubeVideoProcessing(
       }
     }
   ];
+
+  if (flowId) {
+    flowLogger.logFlow(flowId, `Starting AI model streaming call for YouTube video analysis`, 'info', {
+      model: 'googleai/gemini-2.0-flash-lite (implicit)',
+      temperature: 0.5,
+      maxOutputTokens: 6144,
+      systemPrompt: 'You are a helpful Discord bot assistant. Analyze this video content.',
+      userMessage: message,
+      fullPrompt: [
+        { text: 'You are a helpful Discord bot assistant. Analyze this video content.' },
+        ...prompt
+      ], // FULL PROMPT - not trimmed!
+      videoUrl: video.data,
+      videoId: video.videoId,
+      thinkingEnabled: botConfig.thinking.enabled,
+      thinkingBudget: botConfig.thinking.budget,
+      configUsed: GenerationConfigBuilder.build({ temperature: 0.5, maxOutputTokens: 6144 })
+    });
+  }
 
   const { stream } = await ai.generateStream({
     prompt: [
@@ -291,6 +358,8 @@ async function streamYouTubeVideoProcessing(
 
   let fullResponse = '';
   let chunkCount = 0;
+  let thinkingChunkCount = 0;
+  let allThinkingContent = '';
   
   for await (const chunk of stream) {
     // CRITICAL: Filter out thinking chunks, only process final response text
@@ -300,10 +369,54 @@ async function streamYouTubeVideoProcessing(
       logger.debug(`VIDEO FLOW: YouTube response chunk ${chunkCount}, length: ${chunk.text.length}`);
       fullResponse += chunk.text;
       await onChunk(chunk.text);
+
+      // Log each response chunk for flow monitoring
+      if (flowId) {
+        flowLogger.logFlow(flowId, `AI response chunk #${chunkCount} received`, 'debug', {
+          chunkNumber: chunkCount,
+          chunkLength: chunk.text.length,
+          fullChunkContent: chunk.text, // FULL CHUNK - not trimmed!
+          totalResponseLength: fullResponse.length,
+          videoProcessingType: 'youtube'
+        });
+      }
     } else if (chunkAny.thoughts) {
       // Log thinking activity but don't stream to user
-      logger.debug(`VIDEO FLOW: Processing thinking chunk (${chunkAny.thoughts.length} chars) - not streaming to user`);
+      thinkingChunkCount++;
+      allThinkingContent += chunkAny.thoughts;
+      logger.debug(`VIDEO FLOW: Processing thinking chunk ${thinkingChunkCount} (${chunkAny.thoughts.length} chars) - not streaming to user`);
+      
+      // Log thinking chunks for flow monitoring
+      if (flowId) {
+        flowLogger.logFlow(flowId, `AI thinking chunk #${thinkingChunkCount} received`, 'debug', {
+          thinkingChunkNumber: thinkingChunkCount,
+          thinkingChunkLength: chunkAny.thoughts.length,
+          fullThinkingContent: chunkAny.thoughts, // FULL THINKING - not trimmed!
+          totalThinkingLength: allThinkingContent.length,
+          videoProcessingType: 'youtube'
+        });
+      }
     }
+  }
+
+  // Log completion of AI model call with comprehensive statistics
+  if (flowId) {
+    flowLogger.logFlow(flowId, `AI model streaming call completed`, 'info', {
+      model: 'googleai/gemini-2.0-flash-lite (implicit)',
+      totalResponseChunks: chunkCount,
+      totalThinkingChunks: thinkingChunkCount,
+      finalResponseLength: fullResponse.length,
+      totalThinkingLength: allThinkingContent.length,
+      fullFinalResponse: fullResponse, // FULL RESPONSE - not trimmed!
+      fullThinkingContent: allThinkingContent, // FULL THINKING - not trimmed!
+      videoId: video.videoId,
+      videoUrl: video.data,
+      temperature: 0.5,
+      maxOutputTokens: 6144,
+      thinkingEnabled: botConfig.thinking.enabled,
+      streamingCompleted: true,
+      videoProcessingType: 'youtube'
+    });
   }
 
   // Log thinking usage if enabled
@@ -321,7 +434,8 @@ async function streamYouTubeVideoProcessing(
 async function streamRegularVideoProcessing(
   video: ProcessedVideo, 
   message: string, 
-  onChunk: (chunk: string) => void
+  onChunk: (chunk: string) => void,
+  flowId?: string
 ): Promise<string> {
   let tempFilePath: string | null = null;
   let uploadedFileId: string | null = null;
@@ -331,6 +445,20 @@ async function streamRegularVideoProcessing(
       filename: video.filename, 
       size: video.size 
     });
+
+    if (flowId) {
+      flowLogger.logFlow(flowId, `Starting regular video streaming analysis with File API`, 'info', {
+        filename: video.filename,
+        size: video.size,
+        mimeType: video.mimeType,
+        duration: video.duration,
+        videoUrl: video.url,
+        query: message,
+        queryLength: message.length,
+        regularVideoProcessing: true,
+        fileApiUploadRequired: true
+      });
+    }
 
     // Create GoogleGenAI client
     const genaiClient = new GoogleGenAI({ apiKey: botConfig.google.apiKey });
@@ -343,12 +471,31 @@ async function streamRegularVideoProcessing(
 
     // Upload video to Gemini File API
     logger.debug('Uploading video to Gemini File API');
+    
+    if (flowId) {
+      flowLogger.logFlow(flowId, `Starting video upload to Gemini File API`, 'info', {
+        tempFilePath: tempFilePath,
+        mimeType: mimeType,
+        fileSize: video.size,
+        filename: video.filename
+      });
+    }
+    
     const videoFile = await genaiClient.files.upload({
       file: tempFilePath,
       config: { mimeType },
     });
     uploadedFileId = videoFile.name ?? null;
     logger.debug(`Video uploaded: ${videoFile.name ?? 'unknown'}`);
+
+    if (flowId) {
+      flowLogger.logFlow(flowId, `Video upload to Gemini File API completed`, 'info', {
+        uploadedFileId: uploadedFileId,
+        fileName: videoFile.name,
+        fileState: 'uploading',
+        mimeType: mimeType
+      });
+    }
 
     // Wait for processing to complete
     const fileName = videoFile.name;
@@ -367,6 +514,33 @@ async function streamRegularVideoProcessing(
     }
 
     logger.debug(`Video processing complete: ${file.state}`);
+
+    if (flowId) {
+      flowLogger.logFlow(flowId, `Video processing by Gemini completed, starting AI analysis streaming`, 'info', {
+        fileName: fileName,
+        fileUri: file.uri,
+        fileMimeType: file.mimeType,
+        fileState: file.state,
+        processingCompleted: true
+      });
+    }
+
+    if (flowId) {
+      flowLogger.logFlow(flowId, `Starting AI model streaming call for regular video analysis`, 'info', {
+        model: botConfig.google.model,
+        temperature: 0.7,
+        maxOutputTokens: 4096,
+        videoUri: file.uri,
+        videoMimeType: file.mimeType,
+        userMessage: message,
+        fullContents: createUserContent([
+          createPartFromUri(file.uri ?? '', file.mimeType ?? video.mimeType),
+          message,
+        ]), // FULL CONTENTS - not trimmed!
+        fileName: video.filename,
+        fileSize: video.size
+      });
+    }
 
     // Stream response generation
     const response = await genaiClient.models.generateContentStream({
@@ -391,7 +565,36 @@ async function streamRegularVideoProcessing(
         logger.debug(`VIDEO FLOW: Regular video chunk ${chunkCount}, length: ${chunkText.length}`);
         fullResponse += chunkText;
         await onChunk(chunkText);
+
+        // Log each response chunk for flow monitoring
+        if (flowId) {
+          flowLogger.logFlow(flowId, `AI response chunk #${chunkCount} received`, 'debug', {
+            chunkNumber: chunkCount,
+            chunkLength: chunkText.length,
+            fullChunkContent: chunkText, // FULL CHUNK - not trimmed!
+            totalResponseLength: fullResponse.length,
+            videoProcessingType: 'regular'
+          });
+        }
       }
+    }
+
+    // Log completion of AI model call with comprehensive statistics
+    if (flowId) {
+      flowLogger.logFlow(flowId, `AI model streaming call completed`, 'info', {
+        model: botConfig.google.model,
+        totalResponseChunks: chunkCount,
+        finalResponseLength: fullResponse.length,
+        fullFinalResponse: fullResponse, // FULL RESPONSE - not trimmed!
+        fileName: video.filename,
+        fileSize: video.size,
+        videoUri: file.uri,
+        videoMimeType: file.mimeType,
+        temperature: 0.7,
+        maxOutputTokens: 4096,
+        streamingCompleted: true,
+        videoProcessingType: 'regular'
+      });
     }
 
     logger.debug(`VIDEO FLOW: Regular video streaming completed, chunks: ${chunkCount}, response length: ${fullResponse.length}`);

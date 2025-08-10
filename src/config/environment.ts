@@ -60,6 +60,10 @@ export interface BotConfig {
   operator: {
     primaryOperatorId: string;
   };
+  debug: {
+    flowMonitorEnabled: boolean;
+    flowMonitorPort: number;
+  };
 }
 
 function getRequiredEnv(key: string): string {
@@ -145,5 +149,9 @@ export const botConfig: BotConfig = {
   },
   operator: {
     primaryOperatorId: optionalEnv('PRIMARY_OPERATOR_ID', '638632525744439297'),
+  },
+  debug: {
+    flowMonitorEnabled: validateBoolean(optionalEnv('FLOW_MONITOR_ENABLED', 'false')),
+    flowMonitorPort: parseInt(optionalEnv('FLOW_MONITOR_PORT', '3001')),
   },
 };

@@ -11,6 +11,7 @@ import { prisma } from '../persistence/client.js';
 import { logger } from '../utils/logger.js';
 import { RelevanceScorer, type OptimizedContext } from './RelevanceScorer.js';
 import { botConfig } from '../config/environment.js';
+import { flowLogger } from '../debug/flow-logger.js';
 
 type MessageWithAuthor = Message & { 
   author: User;
@@ -232,9 +233,13 @@ export class MessageCacheService {
    * Retrieves formatted conversation context for AI flows
    * Implements sliding window logic from Rust implementation
    */
-  public async getFormattedContext(channelId: string): Promise<string> {
+  public async getFormattedContext(channelId: string, flowId?: string): Promise<string> {
     try {
       logger.info(`DEBUG: getFormattedContext called for channel ${channelId}`);
+      
+      if (flowId) {
+        flowLogger.logFlow(flowId, `Starting context retrieval for channel ${channelId}`, 'info');
+      }
       
       const channel = await this.client.channel.findUnique({ 
         where: { id: channelId } 
@@ -242,6 +247,9 @@ export class MessageCacheService {
       
       if (!channel) {
         logger.info(`DEBUG: No channel found for ID: ${channelId}`);
+        if (flowId) {
+          flowLogger.logFlow(flowId, `No channel found for ID: ${channelId}`, 'warn');
+        }
         return "";
       }
 
@@ -265,6 +273,15 @@ export class MessageCacheService {
         contextWindowStart: channel.contextWindowStart
       });
 
+      if (flowId) {
+        flowLogger.logFlow(flowId, `Retrieved ${messages.length} messages from database`, 'info', {
+          channelId,
+          messageCount: messages.length,
+          contextWindowStart: channel.contextWindowStart.toISOString(),
+          cacheSize: this.cacheSize
+        });
+      }
+
       // Check if we need to slide the window
       if (messages.length > this.cacheSize) {
         await this.slideWindow(channelId, messages);
@@ -276,6 +293,15 @@ export class MessageCacheService {
           remainingMessageCount: remainingMessages.length,
           contextLength: formattedContext.length
         });
+        
+        if (flowId) {
+          flowLogger.logFlow(flowId, `Context formatted after sliding window`, 'info', {
+            remainingMessageCount: remainingMessages.length,
+            contextLength: formattedContext.length,
+            preview: formattedContext.substring(0, 200) + '...'
+          });
+        }
+        
         return formattedContext;
       }
       
@@ -285,6 +311,16 @@ export class MessageCacheService {
         contextLength: formattedContext.length,
         preview: formattedContext.substring(0, 100) + '...'
       });
+
+      if (flowId) {
+        flowLogger.logFlow(flowId, `Context formatted and ready`, 'info', {
+          messageCount: messages.length,
+          contextLength: formattedContext.length,
+          fullContext: formattedContext, // FULL CONTEXT - not trimmed!
+          preview: formattedContext.substring(0, 200) + '...'
+        });
+      }
+
       return formattedContext;
     } catch (error) {
       logger.error(`Failed to get context for channel ${channelId}:`, error);
@@ -451,12 +487,22 @@ export class MessageCacheService {
   public async getOptimizedContext(
     channelId: string,
     query: string,
-    maxMessages: number = botConfig.rag.maxContextMessages
+    maxMessages: number = botConfig.rag.maxContextMessages,
+    flowId?: string
   ): Promise<{
     formattedContext: string;
     optimizationResult: OptimizedContext;
   }> {
     try {
+      if (flowId) {
+        flowLogger.logFlow(flowId, `Starting RAG context optimization`, 'info', {
+          channelId,
+          query,
+          maxMessages,
+          cacheSize: this.cacheSize
+        });
+      }
+
       // Get all cached messages for this channel
       const messages = await this.client.message.findMany({
         where: { channelId },
@@ -468,8 +514,24 @@ export class MessageCacheService {
         take: this.cacheSize * 2,
       });
 
+      if (flowId) {
+        flowLogger.logFlow(flowId, `Retrieved messages for RAG optimization`, 'info', {
+          messageCount: messages.length,
+          maxAllowed: maxMessages,
+          needsOptimization: messages.length > maxMessages
+        });
+      }
+
       if (messages.length <= maxMessages) {
         // No optimization needed
+        if (flowId) {
+          flowLogger.logFlow(flowId, `No RAG optimization needed`, 'info', {
+            messageCount: messages.length,
+            maxMessages,
+            reason: 'Messages within limit'
+          });
+        }
+
         const formattedContext = this.formatMessages(messages);
         return {
           formattedContext,
@@ -484,12 +546,33 @@ export class MessageCacheService {
       }
 
       // Apply relevance scoring
+      if (flowId) {
+        flowLogger.logFlow(flowId, `Starting relevance scoring for RAG optimization`, 'info', {
+          originalMessageCount: messages.length,
+          targetMessageCount: maxMessages,
+          queryLength: query.length,
+          query: query.substring(0, 200) + '...'
+        });
+      }
+
       const relevanceScorer = new RelevanceScorer();
       const optimizationResult = await relevanceScorer.optimizeContext(
         query,
         messages,
         maxMessages
       );
+
+      if (flowId) {
+        flowLogger.logFlow(flowId, `RAG relevance scoring completed`, 'info', {
+          originalMessages: messages.length,
+          optimizedMessages: optimizationResult.messages.length,
+          tokenSavings: Math.round(optimizationResult.tokenSavings),
+          originalTokens: optimizationResult.originalTokens,
+          optimizedTokens: optimizationResult.optimizedTokens,
+          fullOptimizationResult: optimizationResult, // FULL result data
+          relevanceScores: optimizationResult.relevanceScores // FULL scores array
+        });
+      }
 
       const formattedContext = this.formatMessages(optimizationResult.messages);
       

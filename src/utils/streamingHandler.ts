@@ -33,6 +33,7 @@
 
 import { Message } from 'discord.js';
 import { logger } from './logger.js';
+import { flowLogger } from '../debug/flow-logger.js';
 
 export class StreamingHandler {
   private accumulatedText = '';
@@ -42,9 +43,11 @@ export class StreamingHandler {
   private isUpdating = false;
   private chunkCount = 0;
   private editCount = 0;
+  private flowId: string | undefined;
 
-  constructor(originalMessage: Message) {
+  constructor(originalMessage: Message, flowId?: string) {
     this.originalMessage = originalMessage;
+    this.flowId = flowId;
     // Initialize with the first message and its content
     this.accumulatedText = originalMessage.content;
     this.currentMessages = [originalMessage];
@@ -53,6 +56,19 @@ export class StreamingHandler {
   public onChunk(chunk: string): void {
     this.accumulatedText += chunk;
     this.chunkCount++;
+    
+    // Log streaming metrics for flow monitoring with full chunk content
+    if (this.flowId) {
+      flowLogger.onStreamingChunk(this.flowId, this.chunkCount, this.editCount);
+      flowLogger.logFlow(this.flowId, `Received streaming chunk #${this.chunkCount}`, 'debug', {
+        chunkNumber: this.chunkCount,
+        chunkLength: chunk.length,
+        fullChunkContent: chunk, // FULL CHUNK - not trimmed!
+        totalLength: this.accumulatedText.length,
+        editCount: this.editCount,
+        messagesCount: this.currentMessages.length
+      });
+    }
     
     // Debounce updates to avoid overwhelming Discord API
     if (this.updateTimer) {
@@ -141,6 +157,17 @@ export class StreamingHandler {
     
     try {
       logger.debug(`STREAMING: updateMessages called (edit #${this.editCount}, debounce: ${currentDebounce}ms), total length: ${this.accumulatedText.length}, messages: ${this.currentMessages.length}`);
+      
+      // Log Discord edit operation for flow monitoring
+      if (this.flowId) {
+        flowLogger.logFlow(this.flowId, `Discord message edit #${this.editCount}`, 'info', {
+          editNumber: this.editCount,
+          totalLength: this.accumulatedText.length,
+          messageCount: this.currentMessages.length,
+          debounceTime: currentDebounce,
+          fullAccumulatedContent: this.accumulatedText // FULL CONTENT - not trimmed!
+        });
+      }
       
       if (this.accumulatedText.length <= 2000) {
         // Single message case - just edit the first message

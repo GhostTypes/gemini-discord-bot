@@ -1,0 +1,1095 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Discord Bot Flow Monitor</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root {
+            /* Dark Theme Colors - Inspired by Modern Design Systems */
+            --bg-primary: #0a0a0a;
+            --bg-secondary: #111111;
+            --bg-tertiary: #1a1a1a;
+            --bg-elevated: #1f1f1f;
+            --bg-card: #161616;
+            --bg-glass: rgba(22, 22, 22, 0.85);
+            
+            --text-primary: #ffffff;
+            --text-secondary: #e5e5e7;
+            --text-tertiary: #d1d1d6;
+            --text-inverse: #000000;
+            
+            --accent-primary: #007aff;
+            --accent-secondary: #5856d6;
+            --accent-success: #30d158;
+            --accent-warning: #ff9f0a;
+            --accent-error: #ff453a;
+            --accent-purple: #bf5af2;
+            
+            --border-primary: #2c2c2e;
+            --border-secondary: #38383a;
+            --border-tertiary: #48484a;
+            
+            --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.3);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+            --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.6);
+            
+            --blur-sm: blur(4px);
+            --blur-md: blur(8px);
+            --blur-lg: blur(16px);
+            --blur-xl: blur(24px);
+            
+            --radius-sm: 8px;
+            --radius-md: 12px;
+            --radius-lg: 16px;
+            --radius-xl: 20px;
+            --radius-2xl: 24px;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            background: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 50%, #0a0a0a 100%);
+            background-attachment: fixed;
+            min-height: 100vh;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+            color: var(--text-primary);
+            margin: 0;
+            padding: 0;
+            overflow-x: hidden;
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        .main-container {
+            background: var(--bg-glass);
+            backdrop-filter: var(--blur-xl);
+            -webkit-backdrop-filter: var(--blur-xl);
+            border-radius: var(--radius-2xl);
+            border: 1px solid var(--border-primary);
+            box-shadow: var(--shadow-xl);
+            margin: 16px;
+            overflow: hidden;
+            transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+        }
+
+        .main-container:hover {
+            box-shadow: 0 25px 35px -5px rgba(0, 0, 0, 0.7);
+            transform: translateY(-1px);
+        }
+
+        .header {
+            background: linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary) 50%, var(--accent-purple) 100%);
+            color: var(--text-primary);
+            padding: 40px 32px;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(45deg, rgba(255,255,255,0.1) 0%, transparent 100%);
+            pointer-events: none;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin: 0 0 12px 0;
+            letter-spacing: -0.025em;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            margin: 0;
+            opacity: 0.9;
+            font-weight: 400;
+            letter-spacing: 0.01em;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 20px;
+            padding: 32px;
+            background: var(--bg-secondary);
+        }
+
+        .stat-card {
+            background: var(--bg-card);
+            border-radius: var(--radius-xl);
+            padding: 28px 24px;
+            text-align: center;
+            border: 1px solid var(--border-primary);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: var(--accent-color, var(--border-secondary));
+            transition: all 0.3s ease;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-4px) scale(1.02);
+            box-shadow: var(--shadow-lg);
+            border-color: var(--border-secondary);
+        }
+
+        .stat-card.active { --accent-color: var(--accent-success); }
+        .stat-card.total { --accent-color: var(--accent-primary); }
+        .stat-card.avg { --accent-color: var(--accent-warning); }
+        .stat-card.errors { --accent-color: var(--accent-error); }
+
+        .stat-card i {
+            margin-bottom: 16px;
+            opacity: 0.8;
+        }
+
+        .stat-card.active i { color: var(--accent-success); }
+        .stat-card.total i { color: var(--accent-primary); }
+        .stat-card.avg i { color: var(--accent-warning); }
+        .stat-card.errors i { color: var(--accent-error); }
+
+        .stat-number {
+            font-size: 2.75rem;
+            font-weight: 800;
+            margin: 16px 0 8px 0;
+            letter-spacing: -0.02em;
+            line-height: 1;
+        }
+
+        .stat-card.active .stat-number { color: var(--accent-success); }
+        .stat-card.total .stat-number { color: var(--accent-primary); }
+        .stat-card.avg .stat-number { color: var(--accent-warning); }
+        .stat-card.errors .stat-number { color: var(--accent-error); }
+
+        .stat-card .text-muted {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+            font-weight: 500;
+            margin: 0;
+            letter-spacing: 0.01em;
+        }
+
+        .flow-section {
+            padding: 32px;
+            background: var(--bg-primary);
+        }
+
+        .flow-section h3, .flow-section h4 {
+            color: var(--text-primary);
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            margin-bottom: 24px;
+        }
+
+        .flow-card {
+            background: var(--bg-card);
+            border-radius: var(--radius-lg);
+            margin-bottom: 20px;
+            border: 1px solid var(--border-primary);
+            overflow: hidden;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+        }
+
+        .flow-card::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 4px;
+            background: var(--flow-accent, var(--border-secondary));
+            transition: all 0.3s ease;
+        }
+
+        .flow-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-lg);
+            border-color: var(--border-secondary);
+        }
+
+        .flow-card.active { --flow-accent: var(--accent-success); }
+        .flow-card.error { --flow-accent: var(--accent-error); }
+        .flow-card.completed { --flow-accent: var(--accent-primary); }
+
+        .flow-header {
+            padding: 24px;
+            background: var(--bg-elevated);
+            border-bottom: 1px solid var(--border-primary);
+        }
+
+        .flow-body {
+            padding: 24px;
+        }
+
+        .status-badge {
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            border: 1px solid transparent;
+        }
+
+        .status-active { 
+            background: rgba(48, 209, 88, 0.15); 
+            color: var(--accent-success); 
+            border-color: rgba(48, 209, 88, 0.3);
+        }
+        .status-error { 
+            background: rgba(255, 69, 58, 0.15); 
+            color: var(--accent-error); 
+            border-color: rgba(255, 69, 58, 0.3);
+        }
+        .status-completed { 
+            background: rgba(0, 122, 255, 0.15); 
+            color: var(--accent-primary); 
+            border-color: rgba(0, 122, 255, 0.3);
+        }
+
+        .btn-modern {
+            border-radius: var(--radius-md);
+            padding: 12px 20px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            border: 1px solid var(--border-secondary);
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+            letter-spacing: 0.01em;
+        }
+
+        .btn-modern:hover {
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-md);
+            border-color: var(--border-tertiary);
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+        }
+
+        .btn-primary.btn-modern {
+            background: var(--accent-primary);
+            border-color: var(--accent-primary);
+            color: white;
+        }
+
+        .btn-primary.btn-modern:hover {
+            background: #0056b3;
+            border-color: #0056b3;
+            box-shadow: 0 4px 12px rgba(0, 122, 255, 0.3);
+        }
+
+        .form-control, .form-select {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-secondary);
+            color: var(--text-primary);
+            border-radius: var(--radius-md);
+            padding: 12px 16px;
+            transition: all 0.2s ease;
+            font-size: 0.95rem;
+        }
+
+        .form-control:focus, .form-select:focus {
+            background: var(--bg-tertiary);
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.1);
+            color: var(--text-primary);
+        }
+
+        .form-control::placeholder {
+            color: var(--text-secondary);
+            opacity: 0.8;
+        }
+
+        .connection-status {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            padding: 14px 24px;
+            border-radius: 24px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            backdrop-filter: var(--blur-md);
+            -webkit-backdrop-filter: var(--blur-md);
+            border: 1px solid var(--border-secondary);
+            z-index: 1000;
+            transition: all 0.3s ease;
+        }
+
+        .connected { 
+            background: rgba(48, 209, 88, 0.9); 
+            color: white; 
+            border-color: var(--accent-success);
+        }
+        .disconnected { 
+            background: rgba(255, 69, 58, 0.9); 
+            color: white; 
+            border-color: var(--accent-error);
+        }
+
+        .modal-content {
+            background: var(--bg-card);
+            border: 1px solid var(--border-primary);
+            border-radius: var(--radius-xl);
+            color: var(--text-primary);
+        }
+
+        .modal-header {
+            background: var(--bg-elevated);
+            border-bottom: 1px solid var(--border-primary);
+            border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+        }
+
+        .modal-footer {
+            background: var(--bg-elevated);
+            border-top: 1px solid var(--border-primary);
+            border-radius: 0 0 var(--radius-xl) var(--radius-xl);
+        }
+
+        .log-entry {
+            background: var(--bg-elevated);
+            border-radius: var(--radius-md);
+            padding: 20px;
+            margin-bottom: 16px;
+            border: 1px solid var(--border-primary);
+            border-left: 4px solid var(--log-accent, var(--border-secondary));
+            transition: all 0.2s ease;
+        }
+
+        .log-entry:hover {
+            border-color: var(--border-secondary);
+            transform: translateX(2px);
+        }
+
+        .log-entry.info { --log-accent: var(--accent-primary); }
+        .log-entry.warn { --log-accent: var(--accent-warning); }
+        .log-entry.error { --log-accent: var(--accent-error); }
+        .log-entry.debug { --log-accent: var(--text-tertiary); }
+
+        .log-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border-primary);
+        }
+
+        .log-message {
+            font-weight: 600;
+            font-size: 1.05rem;
+            color: var(--text-primary);
+            line-height: 1.4;
+        }
+
+        .log-timestamp {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+        }
+
+        .metadata-grid {
+            display: grid;
+            gap: 16px;
+            margin-top: 16px;
+        }
+
+        .metadata-item {
+            background: var(--bg-secondary);
+            border-radius: var(--radius-md);
+            padding: 16px;
+            border: 1px solid var(--border-primary);
+            transition: all 0.2s ease;
+        }
+
+        .metadata-item:hover {
+            border-color: var(--border-secondary);
+        }
+
+        .metadata-key {
+            font-weight: 600;
+            color: var(--accent-primary);
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.9rem;
+        }
+
+        .metadata-value {
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-primary);
+            border-radius: var(--radius-sm);
+            padding: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-size: 0.85rem;
+            line-height: 1.5;
+            color: var(--text-tertiary);
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 80px 32px;
+            color: var(--text-secondary);
+        }
+
+        .empty-state i {
+            font-size: 3.5rem;
+            margin-bottom: 24px;
+            opacity: 0.6;
+            color: var(--text-tertiary);
+        }
+
+        .empty-state p {
+            font-size: 1.1rem;
+            font-weight: 500;
+            margin: 0;
+        }
+
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--bg-secondary);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border-tertiary);
+            border-radius: 4px;
+            transition: background 0.2s ease;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-tertiary);
+        }
+
+        /* Flow sequence badges */
+        .badge {
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 12px;
+            letter-spacing: 0.02em;
+        }
+
+        .bg-light {
+            background-color: var(--bg-elevated) !important;
+            border: 1px solid var(--border-secondary);
+        }
+
+        .text-dark {
+            color: var(--text-secondary) !important;
+        }
+
+        /* Responsive improvements */
+        @media (max-width: 768px) {
+            .main-container {
+                margin: 12px;
+                border-radius: var(--radius-xl);
+            }
+            
+            .stats-grid {
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 16px;
+                padding: 24px;
+            }
+            
+            .flow-section {
+                padding: 24px;
+            }
+            
+            .header {
+                padding: 32px 24px;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+            }
+        }
+
+        /* Smooth entrance animations */
+        .flow-card {
+            animation: slideInUp 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        @keyframes slideInUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .stat-card {
+            animation: fadeInScale 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        @keyframes fadeInScale {
+            from {
+                opacity: 0;
+                transform: scale(0.95);
+            }
+            to {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid">
+        <div class="main-container">
+            <!-- Header -->
+            <div class="header">
+                <h1><i class="fas fa-robot me-3"></i>Discord Bot Flow Monitor</h1>
+                <p class="mb-0">Real-time flow debugging and comprehensive logging</p>
+            </div>
+
+            <!-- Stats -->
+            <div class="stats-grid">
+                <div class="stat-card active">
+                    <i class="fas fa-play-circle fa-2x"></i>
+                    <div class="stat-number" id="active-count">0</div>
+                    <div class="text-muted">Active Flows</div>
+                </div>
+                <div class="stat-card total">
+                    <i class="fas fa-history fa-2x"></i>
+                    <div class="stat-number" id="total-count">0</div>
+                    <div class="text-muted">Total Flows</div>
+                </div>
+                <div class="stat-card avg">
+                    <i class="fas fa-clock fa-2x"></i>
+                    <div class="stat-number" id="avg-duration">-</div>
+                    <div class="text-muted">Avg Duration</div>
+                </div>
+                <div class="stat-card errors">
+                    <i class="fas fa-exclamation-triangle fa-2x"></i>
+                    <div class="stat-number" id="error-count">0</div>
+                    <div class="text-muted">Errors</div>
+                </div>
+            </div>
+
+            <!-- Controls -->
+            <div class="flow-section">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h3>Flow Monitor</h3>
+                    <div class="d-flex gap-3">
+                        <select id="filter-type" class="form-select" style="width: auto;">
+                            <option value="">All Flow Types</option>
+                            <option value="MESSAGE_ROUTING">Message Routing</option>
+                            <option value="CONVERSATION">Conversation</option>
+                            <option value="CACHED_CONVERSATION">Cached Conversation</option>
+                            <option value="SEARCH_GROUNDING">Search Grounding</option>
+                            <option value="URL_CONTEXT">URL Context</option>
+                            <option value="PDF_PROCESSING">PDF Processing</option>
+                            <option value="VIDEO_PROCESSING">Video Processing</option>
+                            <option value="YOUTUBE_PROCESSING">YouTube Processing</option>
+                            <option value="CODE_EXECUTION">Code Execution</option>
+                            <option value="IMAGE_GENERATION">Image Generation</option>
+                            <option value="GAME_START">Game Start</option>
+                            <option value="GAME_HELP">Game Help</option>
+                            <option value="AUTH">Authentication</option>
+                        </select>
+                        <input type="text" id="filter-user" class="form-control" placeholder="Filter by User ID" style="width: 200px;">
+                        <button id="refresh-btn" class="btn btn-primary btn-modern">
+                            <i class="fas fa-sync-alt"></i> Refresh
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Active Flows -->
+                <div id="active-flows">
+                    <h4 class="mb-3">Active Flows</h4>
+                    <div id="active-flows-container">
+                        <div class="empty-state">
+                            <i class="fas fa-search"></i>
+                            <p>No active flows</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Flow History -->
+                <div id="flow-history" class="mt-5">
+                    <h4 class="mb-3">Recent History</h4>
+                    <div id="history-container">
+                        <div class="empty-state">
+                            <i class="fas fa-history"></i>
+                            <p>No flow history</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Connection Status -->
+    <div id="connection-status" class="connection-status disconnected">
+        <i class="fas fa-wifi"></i> Disconnected
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        class FlowMonitorUI {
+            constructor() {
+                this.ws = null;
+                this.activeFlows = new Map();
+                this.flowHistory = [];
+                this.connectWebSocket();
+                this.setupEventListeners();
+            }
+
+            connectWebSocket() {
+                const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${wsProtocol}//${window.location.host}`;
+
+                try {
+                    this.ws = new WebSocket(wsUrl);
+                    
+                    this.ws.onopen = () => {
+                        console.log('WebSocket connected');
+                        this.updateConnectionStatus(true);
+                    };
+                    
+                    this.ws.onclose = () => {
+                        console.log('WebSocket disconnected');
+                        this.updateConnectionStatus(false);
+                        setTimeout(() => this.connectWebSocket(), 3000);
+                    };
+                    
+                    this.ws.onmessage = (event) => {
+                        this.handleMessage(JSON.parse(event.data));
+                    };
+                } catch (error) {
+                    console.error('WebSocket connection error:', error);
+                    this.updateConnectionStatus(false);
+                }
+            }
+
+            handleMessage(data) {
+                switch (data.type) {
+                    case 'initial_state':
+                        data.activeFlows.forEach(flow => this.activeFlows.set(flow.flowId, flow));
+                        this.flowHistory = data.recentHistory || [];
+                        break;
+                        
+                    case 'flow_started':
+                        this.activeFlows.set(data.flow.flowId, data.flow);
+                        break;
+                        
+                    case 'flow_updated':
+                        const flow = this.activeFlows.get(data.flowId);
+                        if (flow && data.update) {
+                            if (data.update.log) {
+                                flow.logs = flow.logs || [];
+                                flow.logs.push(data.update.log);
+                            }
+                            if (data.update.metrics) {
+                                Object.assign(flow.metrics, data.update.metrics);
+                            }
+                            if (data.update.status) {
+                                flow.status = data.update.status;
+                            }
+                        }
+                        break;
+                        
+                    case 'flow_completed':
+                        this.activeFlows.delete(data.flowId);
+                        this.flowHistory.unshift(data.flow);
+                        if (this.flowHistory.length > 100) {
+                            this.flowHistory = this.flowHistory.slice(0, 100);
+                        }
+                        break;
+                }
+                
+                this.updateUI();
+            }
+
+            updateUI() {
+                this.updateStats();
+                this.renderActiveFlows();
+                this.renderFlowHistory();
+            }
+
+            updateStats() {
+                const activeCount = this.activeFlows.size;
+                const totalCount = this.flowHistory.length + activeCount;
+                const errorCount = this.flowHistory.filter(f => f.status === 'error').length;
+                
+                const completedFlows = this.flowHistory.filter(f => f.duration);
+                const avgDuration = completedFlows.length > 0 
+                    ? Math.round(completedFlows.reduce((sum, f) => sum + f.duration, 0) / completedFlows.length)
+                    : 0;
+                
+                document.getElementById('active-count').textContent = activeCount;
+                document.getElementById('total-count').textContent = totalCount;
+                document.getElementById('error-count').textContent = errorCount;
+                document.getElementById('avg-duration').textContent = avgDuration > 0 ? `${avgDuration}ms` : '-';
+            }
+
+            renderActiveFlows() {
+                const container = document.getElementById('active-flows-container');
+                
+                if (this.activeFlows.size === 0) {
+                    container.innerHTML = `
+                        <div class="empty-state">
+                            <i class="fas fa-search"></i>
+                            <p>No active flows</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                const flowsHtml = Array.from(this.activeFlows.values())
+                    .sort((a, b) => new Date(b.startTime) - new Date(a.startTime))
+                    .map(flow => this.renderFlowCard(flow, true))
+                    .join('');
+                
+                container.innerHTML = flowsHtml;
+            }
+
+            renderFlowHistory() {
+                const container = document.getElementById('history-container');
+                const typeFilter = document.getElementById('filter-type').value;
+                const userFilter = document.getElementById('filter-user').value;
+                
+                let filteredHistory = [...this.flowHistory];
+                
+                if (typeFilter) {
+                    filteredHistory = filteredHistory.filter(f => f.flowType === typeFilter);
+                }
+                
+                if (userFilter) {
+                    filteredHistory = filteredHistory.filter(f => 
+                        f.userId && f.userId.toLowerCase().includes(userFilter.toLowerCase())
+                    );
+                }
+
+                if (filteredHistory.length === 0) {
+                    container.innerHTML = `
+                        <div class="empty-state">
+                            <i class="fas fa-history"></i>
+                            <p>No flow history</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                const historyHtml = filteredHistory
+                    .slice(0, 20)
+                    .map(flow => this.renderFlowCard(flow, false))
+                    .join('');
+                
+                container.innerHTML = historyHtml;
+            }
+
+            renderFlowCard(flow, isActive) {
+                const duration = flow.duration ? `${flow.duration}ms` : 
+                    (isActive ? `${Date.now() - new Date(flow.startTime).getTime()}ms` : 'Unknown');
+                
+                const statusClass = flow.status === 'active' ? 'active' : 
+                    (flow.status === 'error' ? 'error' : 'completed');
+                
+                const statusBadgeClass = flow.status === 'active' ? 'status-active' : 
+                    (flow.status === 'error' ? 'status-error' : 'status-completed');
+
+                const logCount = flow.logs ? flow.logs.length : 0;
+                
+                // Build flow sequence display - show all related flows for this user/channel/message
+                const flowSequence = this.buildFlowSequence(flow);
+                const sequenceDisplay = flowSequence.length > 1 ? `
+                    <div class="mb-2">
+                        <small class="text-muted">
+                            <i class="fas fa-route me-1"></i>
+                            <strong>Flow Sequence:</strong> ${flowSequence.map(f => `<span class="badge bg-light text-dark me-1">${f}</span>`).join('→ ')}
+                        </small>
+                    </div>
+                ` : '';
+                
+                return `
+                    <div class="flow-card ${statusClass}">
+                        <div class="flow-header">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <h5 class="mb-1">
+                                        <i class="fas fa-bolt me-2"></i>
+                                        ${flow.flowType}
+                                        <span class="status-badge ${statusBadgeClass} ms-2">${flow.status}</span>
+                                    </h5>
+                                    <div class="text-muted small">
+                                        <i class="fas fa-user me-1"></i> ${flow.userId} | 
+                                        <i class="fas fa-hashtag me-1"></i> ${flow.channelId} | 
+                                        <i class="fas fa-clock me-1"></i> ${new Date(flow.startTime).toLocaleString()}
+                                    </div>
+                                </div>
+                                <div class="text-end">
+                                    <div class="text-muted small">Duration: <strong>${duration}</strong></div>
+                                    <div class="text-muted small">Logs: <strong>${logCount}</strong></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="flow-body">
+                            ${sequenceDisplay}
+                            ${flow.message ? `<p class="mb-3"><strong>Message:</strong> "${flow.message.substring(0, 100)}${flow.message.length > 100 ? '...' : ''}"</p>` : ''}
+                            <div class="d-flex gap-2">
+                                <button class="btn btn-primary btn-sm btn-modern" onclick="showAllLogs('${flow.flowId}')">
+                                    <i class="fas fa-list me-1"></i> View All Logs (${logCount})
+                                </button>
+                                <button class="btn btn-outline-secondary btn-sm btn-modern" onclick="exportFlow('${flow.flowId}')">
+                                    <i class="fas fa-download me-1"></i> Export
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            buildFlowSequence(currentFlow) {
+                // Find all flows with the same userId, channelId, and similar timing (within 30 seconds)
+                const allFlows = [...this.activeFlows.values(), ...this.flowHistory];
+                const currentTime = new Date(currentFlow.startTime).getTime();
+                const timeWindow = 30000; // 30 seconds
+                
+                const relatedFlows = allFlows.filter(flow => {
+                    if (!flow.userId || !flow.channelId) return false;
+                    
+                    const flowTime = new Date(flow.startTime).getTime();
+                    return flow.userId === currentFlow.userId &&
+                           flow.channelId === currentFlow.channelId &&
+                           Math.abs(flowTime - currentTime) <= timeWindow;
+                }).sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+                
+                return relatedFlows.map(flow => flow.flowType);
+            }
+
+            setupEventListeners() {
+                document.getElementById('refresh-btn').addEventListener('click', () => {
+                    location.reload();
+                });
+                
+                document.getElementById('filter-type').addEventListener('change', () => {
+                    this.renderFlowHistory();
+                });
+                
+                document.getElementById('filter-user').addEventListener('input', () => {
+                    this.renderFlowHistory();
+                });
+            }
+
+            updateConnectionStatus(connected) {
+                const statusEl = document.getElementById('connection-status');
+                if (connected) {
+                    statusEl.className = 'connection-status connected';
+                    statusEl.innerHTML = '<i class="fas fa-wifi"></i> Connected';
+                } else {
+                    statusEl.className = 'connection-status disconnected';
+                    statusEl.innerHTML = '<i class="fas fa-wifi"></i> Disconnected';
+                }
+            }
+        }
+
+        // Global functions
+        window.showAllLogs = function(flowId) {
+            const flowMonitor = window.flowMonitorInstance;
+            const flow = flowMonitor.activeFlows.get(flowId) || 
+                        flowMonitor.flowHistory.find(f => f.flowId === flowId);
+            
+            if (!flow || !flow.logs) {
+                alert('No logs found for this flow');
+                return;
+            }
+
+            const modal = document.createElement('div');
+            modal.className = 'modal fade log-modal';
+            modal.innerHTML = `
+                <div class="modal-dialog">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">
+                                <i class="fas fa-list me-2"></i>
+                                All Logs: ${flow.flowType} (${flow.logs.length} entries)
+                            </h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body" style="max-height: 80vh; overflow-y: auto;">
+                            ${flow.logs.map((log, index) => `
+                                <div class="log-entry ${log.level}">
+                                    <div class="log-header">
+                                        <div class="log-message">
+                                            <i class="fas fa-${log.level === 'error' ? 'exclamation-triangle' : log.level === 'warn' ? 'exclamation-circle' : 'info-circle'} me-2"></i>
+                                            [${log.level.toUpperCase()}] ${log.message}
+                                        </div>
+                                        <div class="log-timestamp">${new Date(log.timestamp).toLocaleString()}</div>
+                                    </div>
+                                    ${log.metadata && Object.keys(log.metadata).length > 0 ? `
+                                        <div class="metadata-grid">
+                                            ${Object.entries(log.metadata).map(([key, value]) => {
+                                                const isLarge = typeof value === 'string' && value.length > 500;
+                                                const displayValue = isLarge ? value.substring(0, 300) + '...' : 
+                                                    typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value);
+                                                
+                                                return `
+                                                    <div class="metadata-item ${isLarge ? 'metadata-large' : ''}">
+                                                        <div class="metadata-key">
+                                                            <i class="fas fa-tag"></i>
+                                                            <strong>${key}</strong>
+                                                            <small class="text-muted">(${typeof value}${isLarge ? `, ${value.length} chars` : ''})</small>
+                                                        </div>
+                                                        <div class="metadata-value">${displayValue}</div>
+                                                        ${isLarge ? `
+                                                            <button class="btn btn-sm btn-outline-primary expand-btn" 
+                                                                onclick="showFullContent('${key}', ${JSON.stringify(value).replace(/'/g, "\\'")})">
+                                                                <i class="fas fa-expand"></i> Show Full Content
+                                                            </button>
+                                                        ` : ''}
+                                                    </div>
+                                                `;
+                                            }).join('')}
+                                        </div>
+                                    ` : '<div class="text-muted"><em>No metadata</em></div>'}
+                                </div>
+                            `).join('')}
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                            <button type="button" class="btn btn-primary" onclick="exportFlow('${flowId}')">
+                                <i class="fas fa-download me-1"></i> Export Flow
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
+            const bootstrapModal = new bootstrap.Modal(modal);
+            bootstrapModal.show();
+            
+            modal.addEventListener('hidden.bs.modal', () => {
+                document.body.removeChild(modal);
+            });
+        };
+
+        window.showFullContent = function(title, content) {
+            const modal = document.createElement('div');
+            modal.className = 'modal fade';
+            modal.innerHTML = `
+                <div class="modal-dialog modal-xl">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">Full Content: ${title}</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="mb-3">
+                                <button class="btn btn-sm btn-outline-primary" onclick="copyToClipboard('full-content')">
+                                    <i class="fas fa-copy"></i> Copy to Clipboard
+                                </button>
+                                <span class="ms-3 text-muted">Length: ${content.length} characters</span>
+                            </div>
+                            <pre id="full-content" class="p-3 bg-light border rounded" 
+                                 style="max-height: 70vh; overflow-y: auto; white-space: pre-wrap; word-break: break-word; font-size: 0.9em;">${content}</pre>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
+            const bootstrapModal = new bootstrap.Modal(modal);
+            bootstrapModal.show();
+            
+            modal.addEventListener('hidden.bs.modal', () => {
+                document.body.removeChild(modal);
+            });
+        };
+
+        window.copyToClipboard = function(elementId) {
+            const element = document.getElementById(elementId);
+            if (element) {
+                navigator.clipboard.writeText(element.textContent).then(() => {
+                    const btn = event.target.closest('button');
+                    const originalHTML = btn.innerHTML;
+                    btn.innerHTML = '<i class="fas fa-check"></i> Copied!';
+                    btn.className = btn.className.replace('btn-outline-primary', 'btn-success');
+                    setTimeout(() => {
+                        btn.innerHTML = originalHTML;
+                        btn.className = btn.className.replace('btn-success', 'btn-outline-primary');
+                    }, 2000);
+                });
+            }
+        };
+
+        window.exportFlow = function(flowId) {
+            const flowMonitor = window.flowMonitorInstance;
+            const flow = flowMonitor.activeFlows.get(flowId) || 
+                        flowMonitor.flowHistory.find(f => f.flowId === flowId);
+            
+            if (flow) {
+                const exportData = {
+                    flowId: flow.flowId,
+                    flowType: flow.flowType,
+                    startTime: flow.startTime,
+                    duration: flow.duration,
+                    status: flow.status,
+                    userId: flow.userId,
+                    channelId: flow.channelId,
+                    message: flow.message,
+                    logs: flow.logs || [],
+                    metrics: flow.metrics || {}
+                };
+                
+                const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `flow-${flowId}-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            }
+        };
+
+        // Initialize when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            window.flowMonitorInstance = new FlowMonitorUI();
+        });
+    </script>
+</body>
+</html>
